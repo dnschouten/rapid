@@ -35,8 +35,6 @@ def collect_arguments():
     save_dir = args.savedir
 
     assert data_dir.is_dir(), "Data directory does not exist."
-    if not save_dir.is_dir():
-        save_dir.mkdir(parents=True, exist_ok=True)
 
     return data_dir, save_dir
 
@@ -49,15 +47,24 @@ def main():
     # Get args
     data_dir, save_dir = collect_arguments()
     
+    # Get patients
+    patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
+
     # Run 3D reconstruction
-    hiprova = Hiprova(data_dir, save_dir)
-    hiprova.load_images()
-    hiprova.load_masks()
-    hiprova.get_centerpoints()
-    hiprova.get_rotations()
-    hiprova.match_centerpoints()
-    hiprova.match_rotations()
-    hiprova.finetune_reconstruction()
+    for pt in patients:
+        hiprova = Hiprova(
+            data_dir = data_dir.joinpath(pt.name), 
+            save_dir = save_dir.joinpath(pt.name)
+        )
+        hiprova.load_images()
+        hiprova.load_masks()
+        hiprova.get_contours()
+        hiprova.get_rdp_contour()
+        hiprova.get_rotations()
+        hiprova.match_centerpoints()
+        hiprova.match_rotations()
+        # hiprova.finetune_reconstruction_icp()
+        hiprova.finetune_reconstruction_lightglue()
 
     return
 
