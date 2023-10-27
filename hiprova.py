@@ -2,33 +2,42 @@ import pyvips
 import matplotlib.pyplot as plt
 import numpy as np
 import cv2
-import trimesh
 import math
 import torch 
 import copy 
 import SimpleITK as sitk
+
+import sys
+sys.path.append("/root/DALF_CVPR_2023")
 
 from scipy import ndimage
 from pathlib import Path
 from scipy.spatial import procrustes, distance
 from skimage.measure import marching_cubes
 import plotly.graph_objects as go
-import matplotlib.patches as patches
 from sklearn.metrics import normalized_mutual_info_score
 from skimage.metrics import structural_similarity as ssim
-
+from typing import Tuple, List
+from scipy.ndimage import distance_transform_edt
+from scipy.interpolate import interpn, interp1d
 
 from lightglue import LightGlue, SuperPoint, viz2d
 from lightglue.utils import rbd
+from modules.models.DALF import DALF_extractor as DALF
+
+from visualization import *
+from utils import *
 
 
 class Hiprova:
 
-    def __init__(self, data_dir: Path, mask_dir: Path, save_dir: Path) -> None:
+    def __init__(self, data_dir: Path, mask_dir: Path, save_dir: Path, detector: str) -> None:
         
         self.data_dir = data_dir
         self.save_dir = save_dir
         self.mask_dir = mask_dir
+        self.detector_name = detector.lower()
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         if not self.save_dir.is_dir():
             self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -38,17 +47,23 @@ class Hiprova:
         self.image_paths = sorted(list(self.image_paths))
         self.mask_paths = [self.mask_dir.joinpath(i.name) for i in self.image_paths]
 
-        # Set level at which to load the image
-        self.image_level = 9
-        self.mask_level = 6
-
-        # Initialize Lightglue 
-        self.extractor = SuperPoint(max_num_keypoints=2048).eval().cuda()  
-        self.matcher = LightGlue(features='superpoint').eval().cuda()
-
         # Create directories
         self.save_dir.joinpath("keypoints").mkdir(parents=True, exist_ok=True)
         self.save_dir.joinpath("warps").mkdir(parents=True, exist_ok=True)
+
+        # Initialize keypoint detector and matcher
+        if self.detector_name == "dalf":
+            self.dalf_detector = DALF(dev=self.device)
+            self.dalf_matcher = cv2.BFMatcher(crossCheck = True)
+        elif self.detector_name == "lightglue":
+            self.lightglue_detector = SuperPoint(max_num_keypoints=2048).eval().cuda()  
+            self.lightglue_matcher = LightGlue(features='superpoint').eval().cuda()
+        else:
+            raise ValueError("Sorry, only DALF and lightglue detectors are supported.")
+
+        # Set level at which to load the image
+        self.image_level = 9
+        self.mask_level = self.image_level-3
 
         return
     
@@ -58,7 +73,6 @@ class Hiprova:
         """
 
         self.images = []
-        self.images_hsv = []
         
         for im_path in self.image_paths:
 
@@ -79,21 +93,14 @@ class Hiprova:
             # Normalize
             image = ((image/np.max(image))*255).astype(np.uint8)
 
-            # Get hsv version 
-            image_hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-
             # Save images
             self.images.append(image)
-            self.images_hsv.append(image_hsv)
 
         # Plot initial reconstruction
-        plt.figure(figsize=(20, 10))
-        for i, image in enumerate(self.images, 1):
-            plt.subplot(1, len(self.images), i)
-            plt.imshow(image)
-            plt.axis("off")
-        plt.savefig(self.save_dir.joinpath("01_initial_situation.png"), dpi=300, bbox_inches="tight")
-        plt.close()
+        plot_initial_reconstruction(
+            images=self.images, 
+            save_dir=self.save_dir
+        )
 
         return 
 
@@ -108,22 +115,32 @@ class Hiprova:
         
         for mask_path in self.mask_paths:
 
-            # Load mask
+            # Hacky workaround to prevent pyvips invalid tile byte count error
             mask = pyvips.Image.new_from_file(str(mask_path), page=self.mask_level)
-            mask = mask.numpy()
+            try:
+                mask = mask.numpy()
+            except:
+                mask = pyvips.Image.new_from_file(str(mask_path), page=self.mask_level+1)
+                mask = mask.resize(2).numpy()
 
-            # Fill some holes 
-            mask = ndimage.binary_fill_holes(mask).astype("uint8")
+            mask_needs_processing = True
+            
+            if mask_needs_processing:
+                # Fill some holes 
+                mask = ndimage.binary_fill_holes(mask).astype("uint8")
 
-            # Smooth the mask a bit
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+                # Smooth the mask a bit
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-            # Only keep the largest component in the mask
-            _, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-            largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-            mask = ((labels == largest_label)*255).astype("uint8")
+                # Only keep the largest component in the mask
+                _, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+                largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+                mask = ((labels == largest_label)*255).astype("uint8")
 
+            else:
+                mask = ((mask / np.max(mask)) * 255).astype("uint8")
+                
             self.masks.append(mask)
 
         return
@@ -155,7 +172,7 @@ class Hiprova:
             # Apply mask to image
             masked_image = copy.copy(image)
             
-            mask_type = "hull"
+            mask_type = "regular"
             if mask_type == "hull":
                 masked_image[hull_mask == 0] = [255, 255, 255]
             elif mask_type == "regular": 
@@ -191,21 +208,13 @@ class Hiprova:
             self.ellipses.append(ellipse)
 
         # Plot resulting ellipse and contour
-        fig, axs = plt.subplots(1, len(self.images), figsize=(20, 10))
-        for image, rotation, ellipse, center, ax in zip(self.masked_images, self.rotations, self.ellipses, self.centerpoints, axs):
-            
-            # Create ellipse patch in matplotlib
-            axes = ellipse[1]
-            ellipse_patch = patches.Ellipse(center, width=axes[1], height=axes[0], angle=rotation-90, edgecolor='g', facecolor='none')
-            
-            # Show image, centerpoint and ellipse
-            ax.imshow(image)
-            ax.scatter(center[0], center[1], c="r")
-            ax.add_patch(ellipse_patch)
-            ax.axis("off")
-
-        plt.savefig(self.save_dir.joinpath(f"ellipses.png"), dpi=300, bbox_inches="tight")
-        plt.close()
+        plot_ellipses(
+            images=self.masked_images, 
+            ellipses=self.ellipses, 
+            centerpoints=self.centerpoints, 
+            rotations=self.rotations, 
+            save_dir=self.save_dir
+        )
 
         return
 
@@ -242,230 +251,330 @@ class Hiprova:
             self.rotated_contours.append(np.squeeze(rotated_contour))
 
         # Plot resulting prealignment
-        plt.figure(figsize=(20, 10))
-        for i, (image, contour) in enumerate(zip(self.rotated_images, self.rotated_contours), 1):
-            plt.subplot(1, len(self.rotated_images), i)
-            plt.imshow(image)
-            plt.scatter(contour[:, 0], contour[:, 1], c="r", s=2)
-            plt.axis("off")
-        plt.savefig(self.save_dir.joinpath("02_prealignment.png"), dpi=300, bbox_inches="tight")
-        plt.close()
+        plot_prealignment(
+            images=self.rotated_images, 
+            contours=self.rotated_contours, 
+            save_dir=self.save_dir
+        )
 
         return
 
-    def finetune_reconstruction(self) -> None:
+    def get_dalf_keypoints(self) -> None:
+        """
+        Wrapper function to get the keypoints from DALF.
+        """
+
+        # Get reference image and extract features 
+        ref_image = self.final_images[self.ref]
+        ref_image_tensor = torch.tensor(ref_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
+
+        return
+
+    def get_lightglue_keypoints(self) -> None:
+        """
+        Wrapper function to get the keypoints from lightglue.
+        """
+
+        # Get reference image and extract features 
+        ref_image = self.final_images[self.ref]
+        ref_image_tensor = torch.tensor(ref_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
+        ref_features = self.extractor.extract(ref_image_tensor)
+
+        # Get image and apply rotation
+        moving_image = self.rotated_images[self.mov]
+        moving_mask = self.rotated_masks[self.mov]
+        moving_contour = self.rotated_contours[self.mov]
+
+        rotation_matrix = cv2.getRotationMatrix2D(tuple(self.common_center.astype("float")), self.rot, 1)
+        moving_image = cv2.warpAffine(moving_image, rotation_matrix, moving_image.shape[:-1][::-1], borderValue=(255, 255, 255))
+        moving_mask = cv2.warpAffine(moving_mask, rotation_matrix, moving_mask.shape[::-1], borderValue=(0, 0, 0))
+        moving_contour = np.squeeze(cv2.transform(np.expand_dims(moving_contour, axis=0), rotation_matrix))
+
+        # Convert to tensor and extract features
+        moving_image_tensor = torch.tensor(moving_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
+        moving_features = self.extractor.extract(moving_image_tensor)
+        
+        # Find matches with features from reference image
+        matches01 = self.matcher({'image0': ref_features, 'image1': moving_features})
+        ref_features2, moving_features, matches01 = [rbd(x) for x in [ref_features, moving_features, matches01]] 
+        matches = matches01['matches']
+
+        # Get keypoints from both images
+        points_ref = ref_features2['keypoints'][matches[..., 0]]
+        points_moving = moving_features['keypoints'][matches[..., 1]]
+
+        # Save image of corresponding matches
+        savepath = self.save_dir.joinpath("keypoints", f"keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
+        plot_keypoint_pairs(
+            ref_image=ref_image, 
+            moving_image=moving_image, 
+            ref_points=points_ref, 
+            moving_points=points_moving, 
+            savepath=savepath
+        )
+
+        # Convert back to numpy
+        self.points_ref = points_ref.cpu().numpy()
+        self.points_moving = points_moving.cpu().numpy()
+        self.ref_image = self.final_images[self.ref]
+        self.ref_mask = self.final_masks[self.ref]
+        self.moving_image = moving_image_tensor.cpu().numpy().transpose((1, 2, 0))
+        self.moving_mask = copy.copy(moving_mask)
+        self.moving_contour = copy.copy(moving_contour)
+
+        return 
+   
+    def warp_affine(self) -> None:
+        """
+        Convenience function to warp images and contours using
+        a limited affine transformation (only rotation+translation).
+        """
+
+        # Compute centroids
+        centroid_fixed = np.mean(self.points_ref, axis=0)
+        centroid_moving = np.mean(self.points_moving, axis=0)
+
+        # Shift the keypoints so that both sets have a centroid at the origin
+        points_ref_centered = self.points_ref - centroid_fixed
+        points_moving_centered = self.points_moving - centroid_moving
+
+        # Compute the rotation matrix
+        H = np.dot(points_moving_centered.T, points_ref_centered)
+        U, _, Vt = np.linalg.svd(H)
+        R = np.dot(Vt.T, U.T)
+
+        # Create the combined rotation and translation matrix
+        self.affine_matrix = np.zeros((2, 3))
+        self.affine_matrix[:2, :2] = R
+        self.affine_matrix[:2, 2] = centroid_fixed - np.dot(R, centroid_moving)
+
+        # Actually warp the images
+        rows, cols, _ = self.moving_image.shape
+        self.moving_image_warped = cv2.warpAffine(
+            (self.moving_image * 255).astype("uint8"), 
+            self.affine_matrix,  
+            (cols, rows), 
+            borderValue=(255, 255, 255)
+        )
+        self.moving_mask_warped = cv2.warpAffine(
+            self.moving_mask, 
+            self.affine_matrix,  
+            (cols, rows), 
+            borderValue=(0, 0, 0)
+        )
+        self.moving_mask_warped = ((self.moving_mask_warped > 128)*255).astype("uint8")
+
+        # Warp contour
+        self.moving_contour = np.squeeze(cv2.transform(np.expand_dims(self.moving_contour, axis=0), self.affine_matrix))
+
+        return
+
+
+    def warp_tps(self) -> None:
+        """
+        Convenience function to warp images and contours using
+        a thin plate spline transformation.
+        """
+
+        # Compute thin plate spline transformation
+        self.tps = cv2.createThinPlateSplineShapeTransformer()
+
+        # Add grid corners for well-defined grid
+        grid_corners = np.array([
+            [0, 0],
+            [0, self.moving_image.shape[1]], 
+            [0, self.moving_image.shape[0]], 
+            [self.moving_image.shape[0], self.moving_image.shape[1]]
+        ], dtype=np.float32)
+        points_moving_tps = np.vstack([self.points_moving, grid_corners])
+        points_ref_tps = np.vstack([self.points_ref, grid_corners])
+
+        # Estimate transformation
+        matches = [cv2.DMatch(i, i, 0) for i in range(len(points_moving_tps))] 
+        self.tps.setRegularizationParameter(0.0001)
+        self.tps.estimateTransformation(
+            points_moving_tps.reshape(1, -1, 2), 
+            points_ref_tps.reshape(1, -1, 2), 
+            matches
+        )
+
+        # Warp image and mask
+        rows, cols, _ = self.moving_image.shape
+        self.moving_image_warped = self.tps.warpImage(self.moving_image, (cols, rows))
+        self.moving_mask_warped = self.tps.warpImage(self.moving_mask, (cols, rows))
+
+        return
+
+    def finetune_reconstruction(self, detector: str) -> None:
         """
         Method to finetune the match between adjacent images using lightglue.
         """
 
+        assert detector.lower() in ["dalf", "lightglue"], "only dalf and lightglue are supported"
+
         # We use the mid slice as reference point and move all images toward this slice.
         mid_slice = int(np.ceil(len(self.rotated_images)//2))
-        self.final_images = [None] * mid_slice + [self.rotated_images[mid_slice]] + [None] * (len(self.rotated_images)-mid_slice-1)
-        self.final_masks = [None] * mid_slice + [self.rotated_masks[mid_slice]] + [None] * (len(self.rotated_masks)-mid_slice-1)
-        self.final_contours = [None] * mid_slice + [self.rotated_contours[mid_slice]] + [None] * (len(self.rotated_contours)-mid_slice-1)
+        self.final_images = [None] * len(self.rotated_images)
+        self.final_images[mid_slice] = self.rotated_images[mid_slice]
+        self.final_masks = [None] * len(self.rotated_images)
+        self.final_masks[mid_slice] = self.rotated_masks[mid_slice]
+        self.final_contours = [None] * len(self.rotated_images)
+        self.final_contours[mid_slice] = self.rotated_contours[mid_slice]
 
         self.moving_indices = list(np.arange(0, mid_slice)[::-1]) + list(np.arange(mid_slice+1, len(self.rotated_images)))
+        self.moving_indices = list(map(int, self.moving_indices))
         self.ref_indices = list(np.arange(0, mid_slice)[::-1] + 1) + list(np.arange(mid_slice+1, len(self.rotated_images)) - 1)
+        self.ref_indices = list(map(int, self.ref_indices))
 
         # Iteratively perform lightglue matching for adjacent pairs and update the reference points.
-        for mov, ref in zip(self.moving_indices, self.ref_indices):
+        for self.mov, self.ref in zip(self.moving_indices, self.ref_indices):
 
-            # Get reference image and extract features 
-            ref_image = self.final_images[ref]
-            ref_mask = self.final_masks[ref]
-            ref_image_tensor = torch.tensor(ref_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
-            ref_features = self.extractor.extract(ref_image_tensor)
+
             
-            best_overlap = 0
+            self.best_overlap = 0
 
-            # Use 180 degree increments when ellipsoid shape, otherwise 90 degree increments
-            ellipse_axis = self.ellipses[mov][1]
-            if np.max(ellipse_axis) > 1.25*np.min(ellipse_axis):
-                rotations = [0, 180]
-            else:
-                rotations = [0, 90, 180, 270]
+            # Use 180 degree increments when ellipsoid shape, otherwise 45 degree increments
+            ellipse_axis = self.ellipses[self.mov][1]
+            rotations = np.arange(0, 181, 180) if np.max(ellipse_axis) > 1.25*np.min(ellipse_axis) else np.arange(0, 360, 45)
 
-            # Compute keypoints for moving image and moving images 180 deg rotated
-            for r in rotations:
+            for self.rot in rotations:
 
-                # Get image and apply rotation
-                moving_image = self.rotated_images[mov]
-                moving_mask = self.rotated_masks[mov]
-                moving_contour = self.rotated_contours[mov]
-
-                rotation_matrix = cv2.getRotationMatrix2D(tuple(self.common_center.astype("float")), r, 1)
-                moving_image = cv2.warpAffine(moving_image, rotation_matrix, moving_image.shape[:-1][::-1], borderValue=(255, 255, 255))
-                moving_mask = cv2.warpAffine(moving_mask, rotation_matrix, moving_mask.shape[::-1], borderValue=(0, 0, 0))
-                moving_contour = np.squeeze(cv2.transform(np.expand_dims(moving_contour, axis=0), rotation_matrix))
-
-                # Convert to tensor and extract features
-                moving_image_tensor = torch.tensor(moving_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
-                moving_features = self.extractor.extract(moving_image_tensor)
-                
-                # Find matches with features from reference image
-                matches01 = self.matcher({'image0': ref_features, 'image1': moving_features})
-                ref_features2, moving_features, matches01 = [rbd(x) for x in [ref_features, moving_features, matches01]] 
-                matches = matches01['matches']
-
-                # Get keypoints from both images
-                points_ref = ref_features2['keypoints'][matches[..., 0]]
-                points_moving = moving_features['keypoints'][matches[..., 1]]
-
-                # Save image of corresponding matches
-                viz2d.plot_images([ref_image, moving_image])
-                viz2d.plot_matches(points_ref, points_moving, color='lime', lw=0.2)
-                viz2d.save_plot(self.save_dir.joinpath("keypoints", f"keypoints_{mov}_to_{ref}_rot_{r}.png"))
-
-                # Convert back to numpy
-                points_ref = points_ref.cpu().numpy()
-                points_moving = points_moving.cpu().numpy()
-                ref_image = ref_image_tensor.cpu().numpy().transpose((1, 2, 0))
-                moving_image = moving_image_tensor.cpu().numpy().transpose((1, 2, 0))
-
-                # Obtain full affine transformation or solely rotation + scaling
-                tform = "partial_affine"
-                if tform == "full_affine":
-                    rows, cols, _ = moving_image.shape
-                    affine_matrix, _ = cv2.estimateAffine2D(points_moving, points_ref)            
-
-                elif tform == "partial_affine":
-                    # Compute centroids
-                    centroid_fixed = np.mean(points_ref, axis=0)
-                    centroid_moving = np.mean(points_moving, axis=0)
-
-                    # Shift the keypoints so that both sets have a centroid at the origin
-                    points_ref_centered = points_ref - centroid_fixed
-                    points_moving_centered = points_moving - centroid_moving
-
-                    # Compute the rotation matrix
-                    H = np.dot(points_moving_centered.T, points_ref_centered)
-                    U, _, Vt = np.linalg.svd(H)
-                    R = np.dot(Vt.T, U.T)
-
-                    # Create the combined rotation and translation matrix
-                    affine_matrix = np.zeros((2, 3))
-                    affine_matrix[:2, :2] = R
-                    affine_matrix[:2, 2] = centroid_fixed - np.dot(R, centroid_moving)
-
-                # Apply transformation
-                rows, cols, _ = moving_image.shape
-                moving_image_warped = cv2.warpAffine(
-                        (moving_image * 255).astype("uint8"), 
-                        affine_matrix,  
-                        (cols, rows), 
-                        borderValue=(255, 255, 255)
-                )
-                moving_mask_warped = cv2.warpAffine(
-                        moving_mask, 
-                        affine_matrix,  
-                        (cols, rows), 
-                        borderValue=(0, 0, 0)
-                )
-                moving_mask_warped = ((moving_mask_warped > 128)*255).astype("uint8")
-                moving_contour = np.squeeze(cv2.transform(np.expand_dims(moving_contour, axis=0), affine_matrix))
+                # Get keypoints from lightglue
+                self.get_lightglue_keypoints()
+                self.warp_affine()
+                # self.warp_tps()
 
                 # Compute which part of the smallest mask falls within the other mask
-                all_mask = [moving_mask_warped, ref_mask]
+                all_mask = [self.moving_mask_warped, self.ref_mask]
                 min_idx = np.argmin([np.sum(i) for i in all_mask])
                 overlap = np.sum(all_mask[min_idx] & all_mask[1-min_idx]) / np.sum(all_mask[min_idx])
 
-                if overlap > best_overlap:
-                    best_overlap = overlap
+                if overlap > self.best_overlap:
+                    self.best_overlap = overlap
 
                     # Save final image and contours
-                    self.final_images[mov] = moving_image_warped.astype("uint8")
-                    self.final_masks[mov] = moving_mask_warped.astype("uint8")
-                    self.final_contours[mov] = moving_contour.astype("int")
+                    self.final_images[self.mov] = self.moving_image_warped.astype("uint8")
+                    self.final_masks[self.mov] = self.moving_mask_warped.astype("uint8")
+                    self.final_contours[self.mov] = self.moving_contour.astype("int")
 
-                # Get contours for visualization purposes
-                cnt_moving, _ = cv2.findContours(moving_mask_warped, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-                cnt_moving = np.squeeze(max(cnt_moving, key=cv2.contourArea))
-                cnt_ref, _ = cv2.findContours(ref_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-                cnt_ref = np.squeeze(max(cnt_ref, key=cv2.contourArea))
+                # Plot warped images as sanity check
+                save_path = self.save_dir.joinpath("warps", f"warped_{self.mov}_rot_{self.rot}.png")
+                plot_warped_images(
+                    self.ref_image, 
+                    self.ref_mask,
+                    self.moving_image, 
+                    self.moving_image_warped, 
+                    self.moving_mask_warped,
+                    overlap, 
+                    save_path
+                )
 
-                # Save image of result 
-                plt.figure(figsize=(20, 10))
-                plt.subplot(141)
-                plt.imshow(ref_image)
-                plt.title("Reference image")
-                plt.axis("off")
-                plt.subplot(142)
-                plt.imshow(moving_image)
-                plt.title("Moving image")
-                plt.axis("off")
-                plt.subplot(143)
-                plt.imshow(moving_image_warped)
-                plt.title("Moving image warped")
-                plt.axis("off")
-                plt.subplot(144)
-                plt.imshow(np.zeros_like(moving_image_warped))
-                plt.scatter(cnt_ref[:, 0], cnt_ref[:, 1], c="r", s=2)
-                plt.scatter(cnt_moving[:, 0], cnt_moving[:, 1], c="b", s=2)
-                plt.title(f"dice: {overlap:.2f}")
-                plt.axis("off")
-                plt.savefig(self.save_dir.joinpath("warps", f"warped_{mov}_rot_{r}.png"), dpi=300, bbox_inches="tight")
-                plt.close()
+                # save_path = self.save_dir.joinpath("warps", f"tps_grid_{self.mov}_rot_{self.rot}.png")
+                # plot_tps_grid(self.points_moving, self.points_ref, self.tps, save_path)
 
+                
         self.final_reconstruction = np.stack(self.final_images, axis=-1)
         self.final_reconstruction_mask = np.stack(self.final_masks, axis=-1)
 
-        # Save final reconstruction
-        plt.figure(figsize=(20, 10))
-        for i in range(self.final_reconstruction.shape[-1]):
-            plt.subplot(1, self.final_reconstruction.shape[-1], i+1)
-            plt.imshow(self.final_reconstruction[:, :, :, i])
-            plt.axis("off")
-        plt.savefig(self.save_dir.joinpath("03_final_reconstruction.png"), dpi=300, bbox_inches="tight")
-        plt.close()
-
-        # Overview figure of the contours
-        plt.figure(figsize=(10, 10))
-        plt.imshow(np.zeros((self.final_reconstruction.shape[:2])), cmap="gray")
-        for cnt in self.final_contours:
-            plt.scatter(cnt[:, 0], cnt[:, 1])
-        plt.axis("off")
-        plt.legend([i.stem for i in self.image_paths])
-        plt.savefig(self.save_dir.joinpath("03_final_reconstruction_contours.png"))
-        plt.close()
+        # Plot final reconstruction
+        plot_final_reconstruction(self.final_reconstruction, self.final_contours, self.image_paths, self.save_dir)
 
         return
 
+    def create_3d_volume(self) -> None:
+        """
+        Method to create a 3D representation of the stacked slices. 
+        Slice thickness is 3 µm and distance between slices is
+        3 mm. 
+        """
 
-    def plot_3d_volume(self):
-        """
-        Method to plot all the levels of the 3D reconstructed volume in a single 3D plot.
-        """
-    
-        # Incorporate 10 empty slices between each slice for better visualization
-        block_size = 10
+        # Prostate specific variables
+        SLICE_THICKNESS = 3
+        SLICE_DISTANCE = 3000
+
+        # Get in-plane downsample factor from image level
+        self.xy_downsample = self.image_level ** 2
+
+        # Get between plane downsample through tissue characteristics and XY downsample.
+        # Block size is the number of empty slices we have to insert between
+        # actual size for a representative 3D model.
+        self.z_downsample = (SLICE_DISTANCE / SLICE_THICKNESS) / self.xy_downsample
+        self.block_size = int(np.round(self.z_downsample)-1)
+
+        # Pre-allocate 3D volumes 
         self.final_reconstruction_3d = np.zeros(
             (self.final_reconstruction.shape[0], 
              self.final_reconstruction.shape[1], 
-             block_size*(self.final_reconstruction.shape[3]+1),
+             self.block_size*(self.final_reconstruction.shape[3]+1),
              self.final_reconstruction.shape[2])
         ).astype("uint8")
         self.final_reconstruction_3d_mask = np.zeros(
             (self.final_reconstruction_mask.shape[0], 
              self.final_reconstruction_mask.shape[1], 
-             block_size*(self.final_reconstruction_mask.shape[2]+1))
+             self.block_size*(self.final_reconstruction_mask.shape[2]+1))
         ).astype("uint8")
 
+        # Populate actual slices
         for i in range(self.final_reconstruction.shape[3]):
-            self.final_reconstruction_3d[:, :, block_size*(i+1), :] = self.final_reconstruction[:, :, :, i]
-            self.final_reconstruction_3d_mask[:, :, block_size*(i+1)] = self.final_reconstruction_mask[:, :, i]
-        
+            self.final_reconstruction_3d[:, :, self.block_size*(i+1), :] = self.final_reconstruction[:, :, :, i]
+            self.final_reconstruction_3d_mask[:, :, self.block_size*(i+1)] = self.final_reconstruction_mask[:, :, i]
+            
         self.final_reconstruction_3d[self.final_reconstruction_3d == 255] = 0
 
-        plt.figure()
-        plt.subplot(121)
-        plt.imshow(self.final_reconstruction_3d[250, :, :, :].transpose(1, 0, 2))
-        plt.subplot(122)
-        plt.imshow(self.final_reconstruction_3d_mask[250, :, :].transpose(1, 0))
-        plt.savefig(self.save_dir.joinpath("3d_reconstruction_slice_test.png"), dpi=300, bbox_inches="tight")
-        plt.close()
-        
+        return
+    
+
+    def interpolate_3d_volume(self) -> None:
+        """
+        Method to interpolate the 2D slices to a binary 3D volume.
+        """
+
+        self.final_reconstruction_volume = copy.copy(self.final_reconstruction_3d_mask)
+        self.filled_slices = [self.block_size*(i+1) for i in range(self.final_reconstruction.shape[3])]
+
+        # Loop over slices for interpolation
+        for i in range(len(self.filled_slices)-1):
+
+            # Get two adjacent slices
+            slice_a = self.final_reconstruction_3d_mask[:, :, self.filled_slices[i]]
+            slice_b = self.final_reconstruction_3d_mask[:, :, self.filled_slices[i+1]]
+
+            # Get contours, simplify and resample
+            num_points = 360
+            contour_a = self.final_contours[i]
+            contour_a = simplify_contour(contour_a)
+            contour_a = resample_contour_radial(contour_a, num_points)
+
+            contour_b = self.final_contours[i+1]
+            contour_b = simplify_contour(contour_b)
+            contour_b = resample_contour_radial(contour_b, num_points)
+
+            for j in range(self.block_size-1):
+
+                # Compute weighted average of contour a and b
+                fraction = j / (self.block_size-1)
+                contour = (1-fraction) * contour_a + fraction * contour_b
+
+                # Fill contour to make a mask
+                mask = np.zeros_like(slice_a)
+                cv2.drawContours(mask, [contour.astype("int")], -1, (255),thickness=cv2.FILLED)
+
+                savepath = self.save_dir.joinpath(f"contour_{self.filled_slices[i]+j+1}.png")
+                if False:
+                    plot_interpolated_contour(slice_a, contour_a, mask, contour, slice_b, contour_b, savepath)
+
+                self.final_reconstruction_volume[:, :, self.filled_slices[i]+j+1] = mask
+
+        return
+
+       
+    def plot_3d_volume(self):
+        """
+        Method to plot all the levels of the 3D reconstructed volume in a single 3D plot.
+        """
+    
         # Extract surface mesh from 3D volume
-        verts, faces, _, _ = marching_cubes(self.final_reconstruction_3d_mask)
+        verts, faces, _, _ = marching_cubes(self.final_reconstruction_volume)
 
         # Plot using plotly
         fig = go.Figure(data=[
@@ -489,5 +598,13 @@ class Hiprova:
         )
 
         fig.show()
+
+        return
+    
+    def save_results(self):
+        """
+        Copy all created figures from Docker to external storage.
+        """
+
 
         return
