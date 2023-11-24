@@ -13,7 +13,7 @@ def plot_initial_reconstruction(images: List[np.ndarray], save_dir: pathlib.Path
     Function to plot the initial situation.
     """
     
-    plt.figure(figsize=(20, 10))
+    plt.figure(figsize=(10, 5))
     for i, image in enumerate(images, 1):
         plt.subplot(1, len(images), i)
         plt.imshow(image)
@@ -29,7 +29,7 @@ def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], centerpoints:
     Function to plot the fitted ellipses on the whole mounts.
     """
 
-    fig, axs = plt.subplots(1, len(images), figsize=(20, 10))
+    fig, axs = plt.subplots(1, len(images), figsize=(10, 5))
     for image, rotation, ellipse, center, ax in zip(images, rotations, ellipses, centerpoints, axs):
         
         # Create ellipse patch in matplotlib
@@ -52,7 +52,7 @@ def plot_prealignment(images: List[np.ndarray], contours: List[np.ndarray], save
     Function to plot the images after rotation and translation adjustment.
     """
 
-    plt.figure(figsize=(20, 10))
+    plt.figure(figsize=(10, 5))
     for i, (image, contour) in enumerate(zip(images, contours), 1):
         plt.subplot(1, len(images), i)
         plt.imshow(image)
@@ -64,9 +64,9 @@ def plot_prealignment(images: List[np.ndarray], contours: List[np.ndarray], save
     return
 
 
-def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: torch.Tensor, moving_points: torch.Tensor, savepath: pathlib.Path) -> None:
+def plot_keypoint_pairs_lightglue(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: torch.Tensor, moving_points: torch.Tensor, savepath: pathlib.Path) -> None:
     """
-    Function to plot the keypoint pairs on two images.
+    Function to plot the lightglue keypoint pairs on two images.
     """
 
     # Transform keypoints to cpu
@@ -77,7 +77,7 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
     keypoints = [ref_points, moving_points] 
 
     # Plot images and keypoints
-    fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+    fig, ax = plt.subplots(1, 2, figsize=(6, 3))
     for c, (im, kp) in enumerate(zip(images, keypoints)):
         ax[c].imshow(im)
         ax[c].set_axis_off()
@@ -114,6 +114,52 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
 
     return
 
+def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, matches: List, ransac_matches: List, savepath: pathlib.Path) -> None:
+    """
+    Function to plot the keypoint pairs on two images.
+    """
+
+    result = cv2.drawMatches(
+        ref_image, 
+        ref_points, 
+        moving_image, 
+        moving_points, 
+        matches, 
+        None, 
+        matchColor=(0,255,0), 
+        matchesMask=None,
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+    )
+
+    result_ransac = cv2.drawMatches(
+        ref_image,
+        ref_points,
+        moving_image,
+        moving_points,
+        ransac_matches,
+        None,
+        matchColor=(0,255,0),
+        matchesMask=None,
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+    )
+
+    plt.figure(figsize = (8, 8))
+    plt.subplot(121)
+    plt.imshow(result)
+    plt.title(f"original matches: (n={len(matches)})")
+    plt.axis("off")
+    plt.subplot(122)
+    plt.imshow(result_ransac)
+    plt.title(f"RANSAC matches: (n={len(ransac_matches)})")
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return
+
+
+
 def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image: np.ndarray, moving_image_warped: np.ndarray, moving_mask_warped: np.ndarray, overlap: float, savepath: pathlib.Path) -> None:
     """
     Plot the warped moving image and the overlap with the reference image.
@@ -126,7 +172,7 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
     cnt_ref = np.squeeze(max(cnt_ref, key=cv2.contourArea))
 
     # Save image of result 
-    plt.figure(figsize=(20, 10))
+    plt.figure(figsize=(10, 5))
     plt.subplot(141)
     plt.imshow(ref_image)
     plt.title("Reference image")
@@ -157,7 +203,7 @@ def plot_final_reconstruction(final_reconstruction: np.ndarray, final_contours: 
 
     # Overview figure of the slices
     savepath = save_dir.joinpath("03_final_reconstruction.png")
-    plt.figure(figsize=(20, 10))
+    plt.figure(figsize=(10, 5))
     for i in range(final_reconstruction.shape[-1]):
         plt.subplot(1, final_reconstruction.shape[-1], i+1)
         plt.imshow(final_reconstruction[:, :, :, i])
@@ -167,7 +213,7 @@ def plot_final_reconstruction(final_reconstruction: np.ndarray, final_contours: 
 
     # Overview figure of the overlapping contours
     savepath = save_dir.joinpath("03_final_reconstruction_contours.png")
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(6, 6))
     plt.imshow(np.zeros((final_reconstruction.shape[:2])), cmap="gray")
     for cnt in final_contours:
         plt.scatter(cnt[:, 0], cnt[:, 1])

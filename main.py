@@ -17,13 +17,7 @@ def collect_arguments():
         "--datadir",
         required=True,
         type=Path,
-        help="Path to the data directory."
-    )
-    parser.add_argument(
-        "--maskdir",
-        required=True,
-        type=Path,
-        help="Path to the masks directory."
+        help="Path to the data directory with images and masks."
     )
     parser.add_argument(
         "--savedir",
@@ -35,13 +29,14 @@ def collect_arguments():
     args = parser.parse_args()
 
     data_dir = args.datadir
-    mask_dir = args.maskdir
     save_dir = args.savedir
 
     assert data_dir.is_dir(), "Data directory does not exist."
-    assert mask_dir.is_dir(), "Mask directory does not exist."
 
-    return data_dir, mask_dir, save_dir
+    if not save_dir.is_dir():
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+    return data_dir, save_dir
 
 
 def main(): 
@@ -50,18 +45,21 @@ def main():
     """
 
     # Get args
-    data_dir, mask_dir, save_dir = collect_arguments()
+    data_dir, save_dir = collect_arguments()
     
     # Get patients
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
 
     # Run 3D reconstruction
-    for pt in patients:
+    for pt in patients[:6]:
+
+        print(f"\nProcessing patient {pt.name}")
+
         hiprova = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
-            mask_dir = mask_dir.joinpath(pt.name),
-            detector = "DALF"
+            detector = "lightglue",
+            tform = "tps"
         )
         hiprova.load_images()
         hiprova.load_masks()
@@ -69,9 +67,10 @@ def main():
         hiprova.find_rotations()
         hiprova.prealignment()
         hiprova.finetune_reconstruction()
-        hiprova.create_3d_volume()
-        hiprova.interpolate_3d_volume()
-        hiprova.plot_3d_volume()
+        # hiprova.create_3d_volume()
+        # hiprova.interpolate_3d_volume()
+        # hiprova.plot_3d_volume()
+        hiprova.save_results()
 
     return
 
