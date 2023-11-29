@@ -32,9 +32,7 @@ def collect_arguments():
     save_dir = args.savedir
 
     assert data_dir.is_dir(), "Data directory does not exist."
-
-    if not save_dir.is_dir():
-        save_dir.mkdir(parents=True, exist_ok=True)
+    save_dir.mkdir(parents=True, exist_ok=True)
 
     return data_dir, save_dir
 
@@ -59,14 +57,14 @@ def main():
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
             detector = "lightglue",
-            tform = "tps"
+            tform_tps = True,
         )
         hiprova.load_images()
         hiprova.load_masks()
         hiprova.apply_masks()
         hiprova.find_rotations()
         hiprova.prealignment()
-        hiprova.finetune_reconstruction()
+        hiprova.perform_reconstruction()
         # hiprova.create_3d_volume()
         # hiprova.interpolate_3d_volume()
         # hiprova.plot_3d_volume()

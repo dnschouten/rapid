@@ -158,8 +158,6 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
 
     return
 
-
-
 def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image: np.ndarray, moving_image_warped: np.ndarray, moving_mask_warped: np.ndarray, overlap: float, savepath: pathlib.Path) -> None:
     """
     Plot the warped moving image and the overlap with the reference image.
@@ -196,13 +194,13 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
 
     return
 
-def plot_final_reconstruction(final_reconstruction: np.ndarray, final_contours: List[List], image_paths: List[pathlib.Path], save_dir: pathlib.Path) -> None:
+def plot_final_reconstruction(final_reconstruction: np.ndarray, final_contours: List[List], image_paths: List[pathlib.Path], save_dir: pathlib.Path, tform: str) -> None:
     """
     Plot final reconstruction using the affine transformation computed from the detected keypoints.
     """
 
     # Overview figure of the slices
-    savepath = save_dir.joinpath("03_final_reconstruction.png")
+    savepath = save_dir.joinpath(f"03_final_reconstruction_{tform}.png")
     plt.figure(figsize=(10, 5))
     for i in range(final_reconstruction.shape[-1]):
         plt.subplot(1, final_reconstruction.shape[-1], i+1)
@@ -211,16 +209,16 @@ def plot_final_reconstruction(final_reconstruction: np.ndarray, final_contours: 
     plt.savefig(savepath, dpi=300, bbox_inches="tight")
     plt.close()
 
-    # Overview figure of the overlapping contours
-    savepath = save_dir.joinpath("03_final_reconstruction_contours.png")
-    plt.figure(figsize=(6, 6))
-    plt.imshow(np.zeros((final_reconstruction.shape[:2])), cmap="gray")
-    for cnt in final_contours:
-        plt.scatter(cnt[:, 0], cnt[:, 1])
-    plt.axis("off")
-    plt.legend([i.stem for i in image_paths])
-    plt.savefig(savepath)
-    plt.close()
+    # # Overview figure of the overlapping contours
+    # savepath = save_dir.joinpath("03_final_reconstruction_contours.png")
+    # plt.figure(figsize=(6, 6))
+    # plt.imshow(np.zeros((final_reconstruction.shape[:2])), cmap="gray")
+    # for cnt in final_contours:
+    #     plt.scatter(cnt[:, 0], cnt[:, 1])
+    # plt.axis("off")
+    # plt.legend([i.stem for i in image_paths])
+    # plt.savefig(savepath)
+    # plt.close()
     
     return
 

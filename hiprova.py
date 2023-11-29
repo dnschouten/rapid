@@ -37,15 +37,14 @@ from utils import *
 
 class Hiprova:
 
-    def __init__(self, data_dir: Path, save_dir: Path, detector: str, tform: str) -> None:
+    def __init__(self, data_dir: Path, save_dir: Path, detector: str, tform_tps: bool=False) -> None:
         
         self.data_dir = data_dir
         self.save_dir = save_dir
-        self.tform_type = tform
+        self.tform_tps = tform_tps
         self.detector_name = detector.lower()
-        assert self.tform_type in ["affine", "tps"], "Sorry, only affine and tps transforms are supported."
         assert self.detector_name in ["dalf", "lightglue"], "Sorry, only DALF and lightglue detectors are supported."
-        
+
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
         if not self.local_save_dir.is_dir():
             self.local_save_dir.mkdir(parents=True, exist_ok=True)
@@ -284,19 +283,19 @@ class Hiprova:
 
         return
 
-    def get_keypoints(self) -> None:
+    def get_keypoints(self, tform: str) -> None:
         """
         Wrapper function to get the keypoints from the chosen detector.
         """
 
         if self.detector_name == "dalf":
-            self.get_dalf_keypoints()
+            self.get_dalf_keypoints(tform)
         elif self.detector_name == "lightglue":
-            self.get_lightglue_keypoints()
+            self.get_lightglue_keypoints(tform)
 
         return
 
-    def get_dalf_keypoints(self) -> None:
+    def get_dalf_keypoints(self, tform: str) -> None:
         """
         Wrapper function to get the keypoints from DALF.
         """
@@ -333,7 +332,7 @@ class Hiprova:
         ransac_matches = [matches[i] for i in range(len(matches)) if inliers[i]]
 
         # Plot resulting keypoints and matches
-        savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
+        savepath = self.local_save_dir.joinpath("keypoints", f"{tform}_keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
         plot_keypoint_pairs(
             ref_image=ref_image, 
             moving_image=moving_image,
@@ -358,7 +357,7 @@ class Hiprova:
 
         return
 
-    def get_lightglue_keypoints(self) -> None:
+    def get_lightglue_keypoints(self, tform: str) -> None:
         """
         Wrapper function to get the keypoints from lightglue.
         """
@@ -402,7 +401,7 @@ class Hiprova:
         ransac_scores = [scores[i] for i in range(len(matches)) if inliers[i]]
 
         # Modify some variables for proper plotting
-        savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
+        savepath = self.local_save_dir.joinpath("keypoints", f"{tform}_keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
         ref_points_plot = ref_features2['keypoints'].cpu().numpy()
         ref_points_plot = [cv2.KeyPoint(x, y, 1) for x, y in ref_points_plot]
         moving_points_plot = moving_features['keypoints'].cpu().numpy()
@@ -435,7 +434,7 @@ class Hiprova:
 
         return 
 
-    def apply_transform(self, ransac: bool = True) -> None:
+    def apply_transform(self, tform: str = "affine", ransac: bool = True) -> None:
         """
         Wrapper function to apply the transform based on the keypoints found.
         """
@@ -451,9 +450,9 @@ class Hiprova:
             self.points_moving_filt = np.float32([self.points_moving[m.trainIdx] for m in ransac_matches])
 
         # Apply affine or TPS transform
-        if self.tform_type == "tps":
+        if tform == "tps":
             self.apply_tps_transform()
-        elif self.tform_type == "affine":
+        elif tform == "affine":
             self.apply_affine_transform()
 
         return
@@ -538,13 +537,10 @@ class Hiprova:
 
         return
     
-
-    def finetune_reconstruction(self) -> None:
+    def reconstruction(self, tform) -> None:
         """
-        Method to finetune the match between adjacent images using keypoint detection and matching.
+        Method to apply either affine or tps reconstruction.
         """
-
-        print(f" - finetuning reconstruction")
 
         # We use the mid slice as reference point and move all images toward this slice.
         mid_slice = int(np.ceil(len(self.rotated_images)//2))
@@ -560,7 +556,7 @@ class Hiprova:
         self.ref_indices = list(np.arange(0, mid_slice)[::-1] + 1) + list(np.arange(mid_slice+1, len(self.rotated_images)) - 1)
         self.ref_indices = list(map(int, self.ref_indices))
 
-        # Iteratively perform lightglue matching for adjacent pairs and update the reference points.
+        # Iteratively perform keypoint matching for adjacent pairs and update the reference points.
         for self.mov, self.ref in zip(self.moving_indices, self.ref_indices):
 
             self.best_overlap = 0
@@ -572,10 +568,10 @@ class Hiprova:
             for self.rot in rotations:
 
                 # Get keypoints from either lightglue or dalf
-                self.get_keypoints()
+                self.get_keypoints(tform=tform)
 
                 # Apply transform based on keypoints, optionally use RANSAC filtering
-                self.apply_transform(ransac=True)
+                self.apply_transform(tform=tform, ransac=True)
 
                 # Compute which part of the smallest mask falls within the other mask
                 all_mask = [self.moving_mask_warped, self.ref_mask]
@@ -591,7 +587,7 @@ class Hiprova:
                     self.final_contours[self.mov] = self.moving_contour.astype("int")
 
                 # Plot warped images as sanity check
-                save_path = self.local_save_dir.joinpath("warps", f"warped_{self.mov}_rot_{self.rot}.png")
+                save_path = self.local_save_dir.joinpath("warps", f"{tform}_warped_{self.mov}_rot_{self.rot}.png")
                 plot_warped_images(
                     self.ref_image, 
                     self.ref_mask,
@@ -601,12 +597,46 @@ class Hiprova:
                     overlap, 
                     save_path
                 )
-                
-        self.final_reconstruction = np.stack(self.final_images, axis=-1)
-        self.final_reconstruction_mask = np.stack(self.final_masks, axis=-1)
 
-        # Plot final reconstruction
-        plot_final_reconstruction(self.final_reconstruction, self.final_contours, self.image_paths, self.local_save_dir)
+        return
+
+    def perform_reconstruction(self) -> None:
+        """
+        Method to finetune the match between adjacent images using keypoint detection and matching.
+        By default we use affine reconstruction and optionally TPS for finetuning.
+    
+        """
+
+        s = " + tps" if self.tform_tps else ""
+        print(f" - finetuning reconstruction [affine{s}]]")
+
+        # Always perform affine reconstruction
+        self.reconstruction(tform="affine")
+        self.final_reconstruction = np.stack(self.final_images, axis=-1)
+        plot_final_reconstruction(
+            final_reconstruction = self.final_reconstruction, 
+            final_contours = self.final_contours, 
+            image_paths = self.image_paths, 
+            save_dir = self.local_save_dir, 
+            tform = "affine"
+        )
+
+        if self.tform_tps:
+            # Hacky way to use affine pre-result for TPS
+            self.rotated_images = copy.copy(self.final_images)
+            self.final_images = []
+            self.reconstruction(tform="tps")
+
+            self.final_reconstruction = np.stack(self.final_images, axis=-1)
+            plot_final_reconstruction(
+                final_reconstruction = self.final_reconstruction, 
+                final_contours = self.final_contours, 
+                image_paths = self.image_paths, 
+                save_dir = self.local_save_dir, 
+                tform = "tps"
+            )
+
+        self.final_reconstruction_mask = np.stack(self.final_masks, axis=-1)
 
         return
 
