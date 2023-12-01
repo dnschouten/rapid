@@ -66,7 +66,8 @@ class Hiprova:
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.ransac_thres = 0.05 if self.detector_name == "lightglue" else 0.2
+        self.ransac_thres_affine = 0.05 if self.detector_name == "lightglue" else 0.2
+        self.ransac_thres_tps = self.ransac_thres_affine / 2
 
         return
     
@@ -283,14 +284,14 @@ class Hiprova:
 
         return
 
-    def get_keypoints(self, tform: str) -> None:
+    def get_keypoints(self, tform: str, detector: str) -> None:
         """
         Wrapper function to get the keypoints from the chosen detector.
         """
 
-        if self.detector_name == "dalf":
+        if detector == "dalf":
             self.get_dalf_keypoints(tform)
-        elif self.detector_name == "lightglue":
+        elif detector == "lightglue":
             self.get_lightglue_keypoints(tform)
 
         return
@@ -328,7 +329,8 @@ class Hiprova:
         points_moving_filt = np.float32([points_moving[m.trainIdx].pt for m in matches])
 
         # Filter matches with RANSAC
-        inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = self.ransac_thres)
+        thres = self.ransac_thres_affine if tform == "affine" else self.ransac_thres_tps
+        inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = thres)
         ransac_matches = [matches[i] for i in range(len(matches)) if inliers[i]]
 
         # Plot resulting keypoints and matches
@@ -396,7 +398,8 @@ class Hiprova:
         points_moving_filt = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
 
         # Filter matches with RANSAC
-        inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = self.ransac_thres)
+        thres = self.ransac_thres_affine if tform == "affine" else self.ransac_thres_tps
+        inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = thres)
         ransac_matches = [matches[i] for i in range(len(matches)) if inliers[i]]
         ransac_scores = [scores[i] for i in range(len(matches)) if inliers[i]]
 
@@ -443,7 +446,8 @@ class Hiprova:
         if ransac:
 
             # Apply ransac to further filter plausible matches
-            inliers = RANSAC.nr_RANSAC(self.points_ref_filt, self.points_moving_filt, self.device, thr = self.ransac_thres)
+            thres = self.ransac_thres_affine if tform == "affine" else self.ransac_thres_tps
+            inliers = RANSAC.nr_RANSAC(self.points_ref_filt, self.points_moving_filt, self.device, thr = thres)
             ransac_matches = [self.matches[i] for i in range(len(self.matches)) if inliers[i]]
 
             self.points_ref_filt = np.float32([self.points_ref[m.queryIdx] for m in ransac_matches])
@@ -537,7 +541,7 @@ class Hiprova:
 
         return
     
-    def reconstruction(self, tform) -> None:
+    def reconstruction(self, tform: str, detector: str) -> None:
         """
         Method to apply either affine or tps reconstruction.
         """
@@ -568,7 +572,7 @@ class Hiprova:
             for self.rot in rotations:
 
                 # Get keypoints from either lightglue or dalf
-                self.get_keypoints(tform=tform)
+                self.get_keypoints(tform=tform, detector=detector)
 
                 # Apply transform based on keypoints, optionally use RANSAC filtering
                 self.apply_transform(tform=tform, ransac=True)
@@ -608,10 +612,10 @@ class Hiprova:
         """
 
         s = " + tps" if self.tform_tps else ""
-        print(f" - finetuning reconstruction [affine{s}]]")
+        print(f" - finetuning reconstruction [affine{s}]")
 
         # Always perform affine reconstruction
-        self.reconstruction(tform="affine")
+        self.reconstruction(tform="affine", detector=self.detector_name)
         self.final_reconstruction = np.stack(self.final_images, axis=-1)
         plot_final_reconstruction(
             final_reconstruction = self.final_reconstruction, 
@@ -622,10 +626,15 @@ class Hiprova:
         )
 
         if self.tform_tps:
-            # Hacky way to use affine pre-result for TPS
+            # Hacky way to repeat reconstruction method by infusing affine results
             self.rotated_images = copy.copy(self.final_images)
+            self.rotated_masks = copy.copy(self.final_masks)
+            self.rotated_contours = copy.copy(self.final_contours)
             self.final_images = []
-            self.reconstruction(tform="tps")
+            self.final_masks = []
+            self.final_contours = []
+
+            self.reconstruction(tform="tps", detector="dalf")
 
             self.final_reconstruction = np.stack(self.final_images, axis=-1)
             plot_final_reconstruction(

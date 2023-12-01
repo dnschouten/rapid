@@ -49,7 +49,7 @@ def main():
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
 
     # Run 3D reconstruction
-    for pt in patients[:6]:
+    for pt in patients:
 
         print(f"\nProcessing patient {pt.name}")
 
