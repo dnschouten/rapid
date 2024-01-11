@@ -56,7 +56,7 @@ def main():
         hiprova = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
-            detector = "lightglue",
+            detector = "dalf",
             tform_tps = True,
         )
         hiprova.load_images()

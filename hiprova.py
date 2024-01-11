@@ -51,6 +51,7 @@ class Hiprova:
 
         # For now only support tif
         self.image_paths = sorted([i for i in self.data_dir.iterdir() if not "mask" in i.name])
+        self.image_ids = [i.stem for i in self.image_paths]
         self.mask_paths = sorted([i for i in self.data_dir.iterdir() if "mask" in i.name])
 
         assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks do not match."
@@ -78,6 +79,7 @@ class Hiprova:
 
         print(f" - loading {len(self.image_paths)} images")
         self.raw_images = []
+        self.raw_pyvips_images = []
         
         for im_path in self.image_paths:
 
@@ -91,15 +93,16 @@ class Hiprova:
 
             # Dispose of alpha band if present
             if image.bands == 4:
-                image = image.flatten().numpy()
+                image_np = image.flatten().numpy()
             elif image.bands == 3: 
-                image = image.numpy()
+                image_np = image.numpy()
 
             # Normalize
-            image = ((image/np.max(image))*255).astype(np.uint8)
+            image_np = ((image_np/np.max(image_np))*255).astype(np.uint8)
 
             # Save images
-            self.raw_images.append(image)
+            self.raw_images.append(image_np)
+            self.raw_pyvips_images.append(image)
 
         # Plot initial reconstruction
         plot_initial_reconstruction(
@@ -117,41 +120,26 @@ class Hiprova:
         """
 
         self.raw_masks = []
+        self.pyvips_masks = []
         
         for c, mask_path in enumerate(self.mask_paths):
 
             # Load mask and convert to numpy array
             mask = pyvips.Image.new_from_file(str(mask_path), page=self.mask_level)
-            mask = mask.numpy()
+            mask_np = mask.numpy()
 
             # Ensure size match between mask and image
             im_shape = self.raw_images[c].shape[:2]
-            if im_shape[0] != mask.shape[0]:
-                mask = cv2.resize(mask, (im_shape[1], im_shape[0]), interpolation=cv2.INTER_NEAREST)
+            if im_shape[0] != mask_np.shape[0]:
+                mask_np = cv2.resize(mask_np, (im_shape[1], im_shape[0]), interpolation=cv2.INTER_NEAREST)
 
             # Normalize
-            mask = ((mask/np.max(mask))*255).astype(np.uint8)
+            mask_np = ((mask_np/np.max(mask_np))*255).astype(np.uint8)
+            mask = ((mask / mask.max())*255).cast("uchar")
 
-            """
-            mask_needs_processing = False
-            if mask_needs_processing:
-                # Fill some holes 
-                mask = ndimage.binary_fill_holes(mask).astype("uint8")
-
-                # Smooth the mask a bit
-                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-
-                # Only keep the largest component in the mask
-                _, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-                largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-                mask = ((labels == largest_label)*255).astype("uint8")
-
-            else:
-                mask = ((mask / np.max(mask)) * 255).astype("uint8")
-            """
-
-            self.raw_masks.append(mask)
+            # Save masks
+            self.raw_masks.append(mask_np)
+            self.pyvips_masks.append(mask)
 
         return
 
@@ -162,6 +150,7 @@ class Hiprova:
         """
 
         self.images = []
+        self.pyvips_images = []
         self.masks = []
         self.contours = []
 
@@ -170,15 +159,19 @@ class Hiprova:
         max_h = int(np.max([i.shape[0] for i in self.raw_images]) * factor)
         max_w = int(np.max([i.shape[1] for i in self.raw_images]) * factor)
 
-        for image, mask in zip(self.raw_images, self.raw_masks):
+        for image, mask, pyvips_image, pyvips_mask in zip(self.raw_images, self.raw_masks, self.raw_pyvips_images, self.pyvips_masks):
             
-            # Pad image to common size
+            # Pad numpy image to common size
             h1, h2 = int(np.ceil((max_h - image.shape[0]) / 2)), int(np.floor((max_h - image.shape[0]) / 2))
             w1, w2 = int(np.ceil((max_w - image.shape[1]) / 2)), int(np.floor((max_w - image.shape[1]) / 2))
             image = np.pad(image, ((h1, h2), (w1, w2), (0, 0)), mode="constant", constant_values=255)
             mask = np.pad(mask, ((h1, h2), (w1, w2)), mode="constant", constant_values=0)
             mask = ((mask > 0)*255).astype("uint8")
            
+            # Pad pyvips images to common size
+            pyvips_image = pyvips_image.embed(w1, h1, max_w, max_h, extend="white")
+            pyvips_mask = pyvips_mask.embed(w1, h1, max_w, max_h, extend="black")
+
             # Get contour from mask
             contour, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
             contour = np.squeeze(max(contour, key=cv2.contourArea))
@@ -201,10 +194,12 @@ class Hiprova:
                 
             elif mask_type == "regular": 
                 masked_image[mask == 0] = 255
+                masked_image_pyvips = (pyvips_image * (pyvips_mask / pyvips_mask.max())).cast("uchar")
 
             # Save masked image and convex hull
             self.contours.append(contour)
             self.images.append(masked_image)
+            self.pyvips_images.append(masked_image_pyvips)
             self.masks.append(mask)
 
         return
@@ -249,13 +244,15 @@ class Hiprova:
         """
 
         self.rotated_images = []
+        self.rotated_images_pyvips = []
         self.rotated_masks = []
+        self.rotated_masks_pyvips = []
         self.rotated_contours = []
 
         # Find common centerpoint of all ellipses to orient towards
         self.common_center = np.mean([i[0] for i in self.ellipses], axis=0).astype("int")
 
-        for image, mask, contour, rotation, center in zip(self.images, self.masks, self.contours, self.rotations, self.centerpoints):
+        for image, mask, image_pyvips, mask_pyvips, contour, rotation, center in zip(self.images, self.masks, self.pyvips_images, self.pyvips_masks, self.contours, self.rotations, self.centerpoints):
 
             # Adjust rotation 
             rotation_matrix = cv2.getRotationMatrix2D(tuple(center), rotation, 1)
@@ -263,6 +260,22 @@ class Hiprova:
             rotated_mask = cv2.warpAffine(mask, rotation_matrix, mask.shape[::-1], borderValue=(0, 0, 0))
             rotated_contour = cv2.transform(np.expand_dims(contour, axis=0), rotation_matrix)
             
+            # Apply to full resolution
+            rotated_image_pyvips = image_pyvips.affine(
+                (rotation_matrix[0, 0], rotation_matrix[0, 1], rotation_matrix[1, 0], rotation_matrix[1, 1]),
+                interpolate = pyvips.Interpolate.new("bicubic"),
+                odx = rotation_matrix[0, 2],
+                ody = rotation_matrix[1, 2],
+                oarea = (0, 0, image_pyvips.shape[1], image_pyvips.shape[0])
+            )
+            rotated_mask_pyvips = mask_pyvips.affine(
+                (rotation_matrix[0, 0], rotation_matrix[0, 1], rotation_matrix[1, 0], rotation_matrix[1, 1]),
+                interpolate = pyvips.Interpolate.new("nearest"),
+                odx = rotation_matrix[0, 2],
+                ody = rotation_matrix[1, 2],
+                oarea = (0, 0, mask_pyvips.shape[1], mask_pyvips.shape[0])
+            )
+
             # Adjust translation 
             translation = self.common_center - center
             translation_matrix = np.float32([[1, 0, translation[0]], [0, 1, translation[1]]])
@@ -271,8 +284,26 @@ class Hiprova:
             rotated_mask = ((rotated_mask > 128)*255).astype("uint8")
             rotated_contour = cv2.transform(rotated_contour, translation_matrix)
 
+            # Apply to full resolution
+            rotated_image_pyvips = rotated_image_pyvips.affine(
+                (translation_matrix[0, 0], translation_matrix[0, 1], translation_matrix[1, 0], translation_matrix[1, 1]),
+                interpolate = pyvips.Interpolate.new("bicubic"),
+                odx = translation_matrix[0, 2],
+                ody = translation_matrix[1, 2],
+                oarea = (0, 0, rotated_image_pyvips.shape[1], rotated_image_pyvips.shape[0])
+            )
+            rotated_mask_pyvips = rotated_mask_pyvips.affine(
+                (translation_matrix[0, 0], translation_matrix[0, 1], translation_matrix[1, 0], translation_matrix[1, 1]),
+                interpolate = pyvips.Interpolate.new("nearest"),
+                odx = translation_matrix[0, 2],
+                ody = translation_matrix[1, 2],
+                oarea = (0, 0, rotated_mask_pyvips.shape[1], rotated_mask_pyvips.shape[0])
+            )
+
             self.rotated_images.append(rotated_image)
+            self.rotated_images_pyvips.append(rotated_image_pyvips)
             self.rotated_masks.append(rotated_mask)
+            self.rotated_masks_pyvips.append(rotated_mask_pyvips)
             self.rotated_contours.append(np.squeeze(rotated_contour))
 
         # Plot resulting prealignment
@@ -353,6 +384,7 @@ class Hiprova:
         self.ref_image = ref_image
         self.ref_mask = self.final_masks[self.ref]
         self.moving_image = moving_image
+        self.moving_image_pyvips = self.rotated_images_pyvips[self.mov]
         self.moving_mask = moving_mask
         self.moving_contour = moving_contour
         self.matches = matches
@@ -536,6 +568,8 @@ class Hiprova:
         )
         self.moving_mask_warped = ((self.moving_mask_warped > 128)*255).astype("uint8")
 
+        # Warp the full resolution image
+
         # Warp contour 
         self.moving_contour = np.squeeze(cv2.transform(np.expand_dims(self.moving_contour, axis=0), self.affine_matrix))
 
@@ -550,8 +584,12 @@ class Hiprova:
         mid_slice = int(np.ceil(len(self.rotated_images)//2))
         self.final_images = [None] * len(self.rotated_images)
         self.final_images[mid_slice] = self.rotated_images[mid_slice]
+        self.final_images_pyvips = [None] * len(self.rotated_images)
+        self.final_images_pyvips[mid_slice] = self.rotated_images_pyvips[mid_slice]
         self.final_masks = [None] * len(self.rotated_images)
         self.final_masks[mid_slice] = self.rotated_masks[mid_slice]
+        self.final_masks_pyvips = [None] * len(self.rotated_images)
+        self.final_masks_pyvips[mid_slice] = self.rotated_masks_pyvips[mid_slice]
         self.final_contours = [None] * len(self.rotated_images)
         self.final_contours[mid_slice] = self.rotated_contours[mid_slice]
 
@@ -559,6 +597,9 @@ class Hiprova:
         self.moving_indices = list(map(int, self.moving_indices))
         self.ref_indices = list(np.arange(0, mid_slice)[::-1] + 1) + list(np.arange(mid_slice+1, len(self.rotated_images)) - 1)
         self.ref_indices = list(map(int, self.ref_indices))
+
+        self.tform_matrices = [None] * len(self.rotated_images)
+        self.best_rotations = [None] * len(self.rotated_images)
 
         # Iteratively perform keypoint matching for adjacent pairs and update the reference points.
         for self.mov, self.ref in zip(self.moving_indices, self.ref_indices):
@@ -589,6 +630,7 @@ class Hiprova:
                     self.final_images[self.mov] = self.moving_image_warped.astype("uint8")
                     self.final_masks[self.mov] = self.moving_mask_warped.astype("uint8")
                     self.final_contours[self.mov] = self.moving_contour.astype("int")
+                    self.best_rotations[self.mov] = self.rot
 
                 # Plot warped images as sanity check
                 save_path = self.local_save_dir.joinpath("warps", f"{tform}_warped_{self.mov}_rot_{self.rot}.png")
