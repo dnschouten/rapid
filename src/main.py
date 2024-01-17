@@ -49,7 +49,7 @@ def main():
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
 
     # Run 3D reconstruction
-    for pt in patients:
+    for pt in patients[2:]:
 
         print(f"\nProcessing patient {pt.name}")
 
@@ -58,6 +58,7 @@ def main():
             save_dir = save_dir.joinpath(pt.name),
             detector = "dalf",
             tform_tps = True,
+            full_resolution_level = 6,
         )
         hiprova.load_images()
         hiprova.load_masks()
