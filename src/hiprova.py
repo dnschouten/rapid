@@ -105,7 +105,7 @@ class Hiprova:
             # Save images
             self.raw_images.append(image_np)
             if self.full_resolution:
-                self.full_resolution_ratio_image = int(image_fullres.width / image.width)
+                self.fullres_scaling = int(image_fullres.width / image.width)
                 self.raw_fullres_images.append(image_fullres)
 
         # Plot initial reconstruction
@@ -144,7 +144,11 @@ class Hiprova:
 
             # Save pyvips mask
             if self.full_resolution:
-                self.full_resolution_ratio_mask = int(mask_fullres.width / mask.width)
+                self.fullres_scaling_mask = int(mask_fullres.width / self.raw_fullres_images[c].width)
+
+                if self.fullres_scaling_mask != 1:
+                    mask_fullres = mask_fullres.resize(1/self.fullres_scaling_mask)
+
                 mask_fullres = ((mask_fullres > 0)*255).cast("uchar")
                 self.raw_fullres_masks.append(mask_fullres)
 
@@ -192,17 +196,17 @@ class Hiprova:
             if self.full_resolution:
                 # Pad pyvips images to common size
                 fullres_image = fullres_image.embed(
-                    w1 * self.full_resolution_ratio_image, 
-                    h1 * self.full_resolution_ratio_image, 
-                    max_w * self.full_resolution_ratio_image, 
-                    max_h * self.full_resolution_ratio_image, 
+                    w1 * self.fullres_scaling, 
+                    h1 * self.fullres_scaling, 
+                    max_w * self.fullres_scaling, 
+                    max_h * self.fullres_scaling, 
                     extend="white"
                 )
                 fullres_mask = fullres_mask.embed(
-                    w1 * self.full_resolution_ratio_image, 
-                    h1 * self.full_resolution_ratio_image, 
-                    max_w * self.full_resolution_ratio_image, 
-                    max_h * self.full_resolution_ratio_image, 
+                    w1 * self.fullres_scaling, 
+                    h1 * self.fullres_scaling, 
+                    max_w * self.fullres_scaling, 
+                    max_h * self.fullres_scaling, 
                     extend="black"
                 )
                 inverse_fullres_mask = 255 - fullres_mask
@@ -274,24 +278,23 @@ class Hiprova:
             
             if self.full_resolution:
                 # Get full resolution rotation matrix
-                rotation_matrix_fullres_image = cv2.getRotationMatrix2D(tuple([i*self.full_resolution_ratio_image for i in center]), rotation, 1)
-                rotation_matrix_fullres_mask= cv2.getRotationMatrix2D(tuple([i*self.full_resolution_ratio_mask for i in center]), rotation, 1)
+                rotation_matrix_fullres = cv2.getRotationMatrix2D(tuple([i*self.fullres_scaling for i in center]), rotation, 1)
 
                 # Apply to full resolution
                 rotated_image_fullres = image_fullres.affine(
-                    (rotation_matrix_fullres_image[0, 0], rotation_matrix_fullres_image[0, 1], rotation_matrix_fullres_image[1, 0], rotation_matrix_fullres_image[1, 1]),
+                    (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
                     interpolate = pyvips.Interpolate.new("bicubic"),
-                    odx = rotation_matrix_fullres_image[0, 2],
-                    ody = rotation_matrix_fullres_image[1, 2],
+                    odx = rotation_matrix_fullres[0, 2],
+                    ody = rotation_matrix_fullres[1, 2],
                     oarea = (0, 0, image_fullres.width, image_fullres.height),
                     background = 255
                 )
 
                 rotated_mask_fullres = mask_fullres.affine(
-                    (rotation_matrix_fullres_mask[0, 0], rotation_matrix_fullres_mask[0, 1], rotation_matrix_fullres_mask[1, 0], rotation_matrix_fullres_mask[1, 1]),
+                    (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
                     interpolate = pyvips.Interpolate.new("nearest"),
-                    odx = rotation_matrix_fullres_mask[0, 2],
-                    ody = rotation_matrix_fullres_mask[1, 2],
+                    odx = rotation_matrix_fullres[0, 2],
+                    ody = rotation_matrix_fullres[1, 2],
                     oarea = (0, 0, mask_fullres.width, mask_fullres.height),
                     background = 0
                 )
@@ -308,23 +311,23 @@ class Hiprova:
             if self.full_resolution:
 
                 # Get full resolution translation matrix
-                translation_matrix_fullres_image = np.float32([[1, 0, translation[0]*self.full_resolution_ratio_image], [0, 1, translation[1]*self.full_resolution_ratio_image]])
-                translation_matrix_fullres_mask = np.float32([[1, 0, translation[0]*self.full_resolution_ratio_mask], [0, 1, translation[1]*self.full_resolution_ratio_mask]])
+                translation_matrix_fullres = np.float32([[1, 0, translation[0]*self.fullres_scaling], [0, 1, translation[1]*self.fullres_scaling]])
+                translation_matrix_fullres = np.float32([[1, 0, translation[0]*self.fullres_scaling_mask], [0, 1, translation[1]*self.fullres_scaling_mask]])
 
                 # Apply to full resolution
                 rotated_image_fullres = rotated_image_fullres.affine(
-                    (translation_matrix_fullres_image[0, 0], translation_matrix_fullres_image[0, 1], translation_matrix_fullres_image[1, 0], translation_matrix_fullres_image[1, 1]),
+                    (translation_matrix_fullres[0, 0], translation_matrix_fullres[0, 1], translation_matrix_fullres[1, 0], translation_matrix_fullres[1, 1]),
                     interpolate = pyvips.Interpolate.new("bicubic"),
-                    odx = translation_matrix_fullres_image[0, 2],
-                    ody = translation_matrix_fullres_image[1, 2],
+                    odx = translation_matrix_fullres[0, 2],
+                    ody = translation_matrix_fullres[1, 2],
                     oarea = (0, 0, rotated_image_fullres.width, rotated_image_fullres.height),
                     background = 255
                 )
                 rotated_mask_fullres = rotated_mask_fullres.affine(
-                    (translation_matrix_fullres_mask[0, 0], translation_matrix_fullres_mask[0, 1], translation_matrix_fullres_mask[1, 0], translation_matrix_fullres_mask[1, 1]),
+                    (translation_matrix_fullres[0, 0], translation_matrix_fullres[0, 1], translation_matrix_fullres[1, 0], translation_matrix_fullres[1, 1]),
                     interpolate = pyvips.Interpolate.new("nearest"),
-                    odx = translation_matrix_fullres_mask[0, 2],
-                    ody = translation_matrix_fullres_mask[1, 2],
+                    odx = translation_matrix_fullres[0, 2],
+                    ody = translation_matrix_fullres[1, 2],
                     oarea = (0, 0, rotated_mask_fullres.width, rotated_mask_fullres.height),
                     background = 0
                 )
@@ -372,10 +375,39 @@ class Hiprova:
         moving_mask = self.rotated_masks[self.mov]
         moving_contour = self.rotated_contours[self.mov]
 
+        if self.full_resolution:
+            moving_image_fullres = self.rotated_images_fullres[self.mov]
+            moving_mask_fullres = self.rotated_masks_fullres[self.mov]
+
+        # Apply flipping for regular images
         rotation_matrix = cv2.getRotationMatrix2D(tuple(self.common_center.astype("float")), self.rot, 1)
         moving_image = cv2.warpAffine(moving_image, rotation_matrix, moving_image.shape[:-1][::-1], borderValue=(255, 255, 255))
         moving_mask = cv2.warpAffine(moving_mask, rotation_matrix, moving_mask.shape[::-1], borderValue=(0, 0, 0))
         moving_contour = np.squeeze(cv2.transform(np.expand_dims(moving_contour, axis=0), rotation_matrix))
+
+        # Apply flipping for fullres images
+        if self.full_resolution:
+            rotation_matrix_fullres = cv2.getRotationMatrix2D(
+                tuple([float(i*self.fullres_scaling) for i in self.common_center]), 
+                self.rot, 
+                1
+            )
+            moving_image_fullres = moving_image_fullres.affine(
+                (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
+                interpolate = pyvips.Interpolate.new("bicubic"),
+                odx = rotation_matrix_fullres[0, 2],
+                ody = rotation_matrix_fullres[1, 2],
+                oarea = (0, 0, moving_image_fullres.width, moving_image_fullres.height),
+                background = 255
+            )
+            moving_mask_fullres = moving_mask_fullres.affine(
+                (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
+                interpolate = pyvips.Interpolate.new("nearest"),
+                odx = rotation_matrix_fullres[0, 2],
+                ody = rotation_matrix_fullres[1, 2],
+                oarea = (0, 0, moving_mask_fullres.width, moving_mask_fullres.height),
+                background = 0
+            )
 
         # Extract features
         points_ref, desc_ref = self.dalf_detector.detectAndCompute(ref_image)
@@ -414,8 +446,9 @@ class Hiprova:
         self.ref_image = ref_image
         self.ref_mask = self.final_masks[self.ref]
         self.moving_image = moving_image
-        self.moving_image_fullres = self.rotated_images_fullres[self.mov]
+        self.moving_image_fullres = moving_image_fullres
         self.moving_mask = moving_mask
+        self.moving_mask_fullres = moving_mask_fullres
         self.moving_contour = moving_contour
         self.matches = matches
 
@@ -440,10 +473,39 @@ class Hiprova:
         moving_mask = self.rotated_masks[self.mov]
         moving_contour = self.rotated_contours[self.mov]
 
+        if self.full_resolution:
+            moving_image_fullres = self.rotated_images_fullres[self.mov]
+            moving_mask_fullres = self.rotated_masks_fullres[self.mov]
+
+        # Apply flipping for regular images
         rotation_matrix = cv2.getRotationMatrix2D(tuple(self.common_center.astype("float")), self.rot, 1)
         moving_image = cv2.warpAffine(moving_image, rotation_matrix, moving_image.shape[:-1][::-1], borderValue=(255, 255, 255))
         moving_mask = cv2.warpAffine(moving_mask, rotation_matrix, moving_mask.shape[::-1], borderValue=(0, 0, 0))
         moving_contour = np.squeeze(cv2.transform(np.expand_dims(moving_contour, axis=0), rotation_matrix))
+
+        # Apply flipping for fullres images
+        if self.full_resolution:
+            rotation_matrix_fullres = cv2.getRotationMatrix2D(
+                tuple([float(i*self.fullres_scaling) for i in self.common_center]), 
+                self.rot, 
+                1
+            )
+            moving_image_fullres = moving_image_fullres.affine(
+                (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
+                interpolate = pyvips.Interpolate.new("bicubic"),
+                odx = rotation_matrix_fullres[0, 2],
+                ody = rotation_matrix_fullres[1, 2],
+                oarea = (0, 0, moving_image_fullres.width, moving_image_fullres.height),
+                background = 255
+            )
+            moving_mask_fullres = moving_mask_fullres.affine(
+                (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
+                interpolate = pyvips.Interpolate.new("nearest"),
+                odx = rotation_matrix_fullres[0, 2],
+                ody = rotation_matrix_fullres[1, 2],
+                oarea = (0, 0, moving_mask_fullres.width, moving_mask_fullres.height),
+                background = 0
+            )
 
         # Convert to tensor and extract features
         moving_image_tensor = torch.tensor(moving_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
@@ -493,7 +555,9 @@ class Hiprova:
         self.ref_image = self.final_images[self.ref]
         self.ref_mask = self.final_masks[self.ref]
         self.moving_image = (moving_image_tensor.cpu().numpy().transpose((1, 2, 0))*255).astype("uint8")
+        self.moving_image_fullres = moving_image_fullres
         self.moving_mask = moving_mask
+        self.moving_mask_fullres = moving_mask_fullres
         self.moving_contour = moving_contour
         self.matches = [cv2.DMatch(int(a), int(b), s) for (a, b), s in zip(matches.cpu(), scores)]
 
@@ -591,28 +655,28 @@ class Hiprova:
         R = np.dot(Vt.T, U.T)
 
         # Create the combined rotation and translation matrix
-        self.affine_matrix = np.zeros((2, 3))
-        self.affine_matrix[:2, :2] = R
-        self.affine_matrix[:2, 2] = centroid_fixed - np.dot(R, centroid_moving)
+        affine_matrix = np.zeros((2, 3))
+        affine_matrix[:2, :2] = R
+        affine_matrix[:2, 2] = centroid_fixed - np.dot(R, centroid_moving)
 
         # Actually warp the images
         rows, cols, _ = self.moving_image.shape
         self.moving_image_warped = cv2.warpAffine(
             self.moving_image, 
-            self.affine_matrix,  
+            affine_matrix,  
             (cols, rows), 
             borderValue=(255, 255, 255)
         )
         self.moving_mask_warped = cv2.warpAffine(
             self.moving_mask, 
-            self.affine_matrix,  
+            affine_matrix,  
             (cols, rows), 
             borderValue=(0, 0, 0)
         )
         self.moving_mask_warped = ((self.moving_mask_warped > 128)*255).astype("uint8")
 
         # Warp contour 
-        self.moving_contour = np.squeeze(cv2.transform(np.expand_dims(self.moving_contour, axis=0), self.affine_matrix))
+        self.moving_contour = np.squeeze(cv2.transform(np.expand_dims(self.moving_contour, axis=0), affine_matrix))
 
         return
     
@@ -623,11 +687,16 @@ class Hiprova:
 
         # Compute centroids
         centroid_fixed = np.mean(self.points_ref_filt, axis=0)
+        centroid_fixed = [i * self.fullres_scaling for i in centroid_fixed]
         centroid_moving = np.mean(self.points_moving_filt, axis=0)
+        centroid_moving = [i * self.fullres_scaling for i in centroid_moving]
 
         # Shift the keypoints so that both sets have a centroid at the origin
-        points_ref_centered = self.points_ref_filt - centroid_fixed
-        points_moving_centered = self.points_moving_filt - centroid_moving
+        points_ref_filt = np.float32([i * self.fullres_scaling for i in self.points_ref_filt])
+        points_moving_filt = np.float32([i * self.fullres_scaling for i in self.points_moving_filt])
+
+        points_ref_centered = points_ref_filt - centroid_fixed
+        points_moving_centered = points_moving_filt - centroid_moving
 
         # Compute the rotation matrix
         H = np.dot(points_moving_centered.T, points_ref_centered)
@@ -640,20 +709,34 @@ class Hiprova:
         affine_matrix[:2, 2] = centroid_fixed - np.dot(R, centroid_moving)
 
         # Actually warp the images
-        rows, cols, _ = self.moving_image.shape
-        self.moving_image_warped = cv2.warpAffine(
-            self.moving_image, 
-            self.affine_matrix,  
-            (cols, rows), 
-            borderValue=(255, 255, 255)
+        self.moving_image_fullres_warped = self.moving_image_fullres.affine(
+            (affine_matrix[0, 0], affine_matrix[0, 1], affine_matrix[1, 0], affine_matrix[1, 1]),
+            interpolate = pyvips.Interpolate.new("bicubic"),
+            odx = affine_matrix[0, 2],
+            ody = affine_matrix[1, 2],
+            oarea = (0, 0, self.moving_image_fullres.width, self.moving_image_fullres.height),
+            background = 255
         )
-        self.moving_mask_warped = cv2.warpAffine(
-            self.moving_mask, 
-            self.affine_matrix,  
-            (cols, rows), 
-            borderValue=(0, 0, 0)
+        self.moving_mask_fullres_warped = self.moving_mask_fullres.affine(
+            (affine_matrix[0, 0], affine_matrix[0, 1], affine_matrix[1, 0], affine_matrix[1, 1]),
+            interpolate = pyvips.Interpolate.new("nearest"),
+            odx = affine_matrix[0, 2],
+            ody = affine_matrix[1, 2],
+            oarea = (0, 0, self.moving_mask_fullres.width, self.moving_mask_fullres.height),
+            background = 0
         )
-        self.moving_mask_warped = ((self.moving_mask_warped > 128)*255).astype("uint8")
+
+        plt.figure()
+        plt.subplot(121)
+        plt.imshow(self.moving_image_fullres.numpy())
+        plt.title("before affine")
+        plt.axis("off")
+        plt.subplot(122)
+        plt.imshow(self.moving_image_fullres_warped.numpy())
+        plt.title("after affine")
+        plt.axis("off")
+        plt.savefig(self.debug_dir.joinpath(f"affine_fullres_{self.mov}.png"))
+        plt.close()
 
         return
 
@@ -699,6 +782,9 @@ class Hiprova:
 
                 # Apply transform based on keypoints, optionally use RANSAC filtering
                 self.apply_transform(tform=tform, ransac=True)
+                
+                if self.full_resolution:
+                    self.apply_transform_fullres(tform=tform)
 
                 # Compute which part of the smallest mask falls within the other mask
                 all_mask = [self.moving_mask_warped, self.ref_mask]
@@ -714,6 +800,10 @@ class Hiprova:
                     self.final_contours[self.mov] = self.moving_contour.astype("int")
                     self.best_rotations[self.mov] = self.rot
 
+                    if self.full_resolution:
+                        self.final_images_fullres[self.mov] = self.moving_image_fullres_warped
+                        self.final_masks_fullres[self.mov] = self.moving_mask_fullres_warped
+
                 # Plot warped images as sanity check
                 save_path = self.local_save_dir.joinpath("warps", f"{tform}_warped_{self.mov}_rot_{self.rot}.png")
                 plot_warped_images(
@@ -725,9 +815,6 @@ class Hiprova:
                     overlap, 
                     save_path
                 )
-
-            if self.full_resolution:
-                self.apply_transform_fullres(tform=tform)
 
         return
 
