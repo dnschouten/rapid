@@ -1,7 +1,10 @@
 import cv2
 import numpy as np
+import torch
+
 from typing import Tuple
 from scipy.interpolate import interpn, interp1d
+from torchvision.transforms import ToTensor, ToPILImage
 
 
 def compute_line_intersection(line1: np.ndarray, line2: np.ndarray) -> Tuple[float, float]:
@@ -159,3 +162,32 @@ def simplify_contour(contour: np.ndarray) -> np.ndarray:
         contour = np.vstack([contour, contour[0, :]])
 
     return contour
+
+
+def visualize_grid(image_size, grid):
+    """
+    Draw a grid on a blank image.
+    """
+
+    # Create blank image and define grid size
+    image = np.ones((image_size[0], image_size[1], 3), dtype=np.uint8) * 255
+    row_step, col_step = 100, 100
+
+    # Draw horizontal and vertical lines
+    line_color = (0, 0, 0)
+    line_width = 1
+    for i in range(0, image_size[0], row_step):
+        image[i:i+line_width, :, :] = line_color
+
+    for j in range(0, image_size[1], col_step):
+        image[:, j:j+line_width, :] = line_color
+
+    # Apply the grid
+    tensor_image = ToTensor()(image).unsqueeze(0).cuda()
+    warped_image = torch.nn.functional.grid_sample(tensor_image, grid, mode='bilinear', align_corners=False)
+
+    # Remove the batch dimension and convert back to PIL image
+    warped_image = warped_image.squeeze(0)
+    warped_image = ToPILImage()(warped_image)
+
+    return warped_image
