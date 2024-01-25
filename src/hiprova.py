@@ -8,6 +8,7 @@ import copy
 import SimpleITK as sitk
 import subprocess
 import shutil
+import pyvista as pv
 
 import sys
 sys.path.append("/root/DALF_CVPR_2023")
@@ -34,7 +35,7 @@ from config import Config
 
 class Hiprova:
 
-    def __init__(self, data_dir: Path, save_dir: Path, detector: str, tform_tps: bool=False, full_resolution_level: int=-1) -> None:
+    def __init__(self, data_dir: Path, save_dir: Path, tform_tps: bool=False) -> None:
         
         self.config = Config()
 
@@ -44,10 +45,10 @@ class Hiprova:
         self.debug_dir.mkdir(exist_ok=True, parents=True)
 
         self.tform_tps = tform_tps
-        self.full_resolution = full_resolution_level > 0
-        self.full_resolution_level_image = full_resolution_level
-        self.full_resolution_level_mask = full_resolution_level - self.config.image_mask_level_diff
-        self.detector_name = detector.lower()
+        self.full_resolution = self.config.full_resolution_level > 0
+        self.full_resolution_level_image = self.config.full_resolution_level
+        self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
+        self.detector_name = self.config.detector.lower()
         assert self.detector_name in ["dalf", "lightglue"], "Sorry, only DALF and lightglue detectors are supported."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
@@ -67,10 +68,10 @@ class Hiprova:
         self.local_save_dir.joinpath("warps").mkdir(parents=True, exist_ok=True)
 
         # Set level at which to load the image
-        self.image_level = self.config.image_level
-        self.mask_level = self.image_level-self.config.image_mask_level_diff
-        assert self.full_resolution_level_image <= self.image_level, "Full resolution level should be lower than image level."
-        self.fullres_scaling = 2 ** (self.image_level - self.full_resolution_level_image)
+        self.image_level_affine = self.config.image_level_affine
+        self.mask_level = self.image_level_affine-self.config.image_mask_level_diff
+        assert self.full_resolution_level_image <= self.image_level_affine, "Full resolution level should be lower than image level."
+        self.fullres_scaling = 2 ** (self.image_level_affine - self.full_resolution_level_image)
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -91,9 +92,9 @@ class Hiprova:
 
             # Load image
             if im_path.suffix == ".mrxs":
-                image = pyvips.Image.new_from_file(str(im_path), level=self.image_level)
+                image = pyvips.Image.new_from_file(str(im_path), level=self.image_level_affine)
             elif im_path.suffix == ".tif":
-                image = pyvips.Image.new_from_file(str(im_path), page=self.image_level)
+                image = pyvips.Image.new_from_file(str(im_path), page=self.image_level_affine)
             else:
                 raise ValueError("Sorry, only .tifs and .mrxs are supported.")
 
@@ -732,7 +733,7 @@ class Hiprova:
         plt.imshow(self.moving_image_fullres_warped.numpy())
         plt.axis("off")
         plt.title("tps fullres")
-        plt.savefig(self.debug_dir.joinpath("tps_numpy_vs_fullres.png"))
+        plt.savefig(self.debug_dir.joinpath(f"tps_numpy_vs_fullres_{self.mov}.png"))
         plt.close()
 
         return
@@ -930,8 +931,7 @@ class Hiprova:
         By default we use affine reconstruction and optionally TPS for finetuning.
         """
 
-        s = " + tps" if self.tform_tps else ""
-        print(f" - finetuning reconstruction [affine{s}]")
+        print(" - finetuning reconstruction [affine]")
 
         # Always perform affine reconstruction
         self.reconstruction(tform="affine", detector=self.detector_name, correct_flip=True)
@@ -946,6 +946,8 @@ class Hiprova:
 
         # Optionally perform thin-plate-spline finetuning
         if self.tform_tps:
+
+            print(" - finetuning reconstruction [tps]")
 
             # Hacky way to repeat same reconstruction method by infusing affine results
             self.rotated_images = copy.copy(self.final_images)
@@ -976,9 +978,9 @@ class Hiprova:
 
     def create_3d_volume(self) -> None:
         """
-        Method to create a 3D representation of the stacked slices. 
-        Slice thickness is 3 µm and distance between slices is
-        3 mm. 
+        Method to create a 3D representation of the stacked slices. We leverage sectioning
+        variables such as slice thickness, slice distance and x-y-z downsampling levels
+        to create an anatomical true to size 3D volume.
         """
 
         print(f" - creating 3D volume")
@@ -988,26 +990,27 @@ class Hiprova:
         slice_distance = self.config.slice_distance
 
         # Get in-plane downsample factor from image level
-        self.xy_downsample = self.image_level ** 2
+        self.xy_downsample = 2 ** self.image_level_affine 
 
-        # Get between plane downsample through tissue characteristics and XY downsample.
         # Block size is the number of empty slices we have to insert between
-        # actual size for a representative 3D model.
-        self.z_downsample = (slice_distance / slice_thickness) / self.xy_downsample
-        self.block_size = int(np.round(self.z_downsample)-1)
+        # actual slices for a true to size 3D model.
+        self.z_downsample = slice_distance / self.xy_downsample
+        self.block_size = int(np.round(self.z_downsample * slice_thickness)-1)
 
         # Pre-allocate 3D volumes 
         self.final_reconstruction_3d = np.zeros(
             (self.final_reconstruction.shape[0], 
              self.final_reconstruction.shape[1], 
              self.block_size*(self.final_reconstruction.shape[3]+1),
-             self.final_reconstruction.shape[2])
-        ).astype("uint8")
+             self.final_reconstruction.shape[2]),
+             dtype="uint8"
+        )
         self.final_reconstruction_3d_mask = np.zeros(
             (self.final_reconstruction_mask.shape[0], 
              self.final_reconstruction_mask.shape[1], 
-             self.block_size*(self.final_reconstruction_mask.shape[2]+1))
-        ).astype("uint8")
+             self.block_size*(self.final_reconstruction_mask.shape[2]+1)),
+             dtype="uint8"
+        )
 
         # Populate actual slices
         for i in range(self.final_reconstruction.shape[3]):
@@ -1068,8 +1071,12 @@ class Hiprova:
         Method to plot all the levels of the 3D reconstructed volume in a single 3D plot.
         """
     
+        # Downsize volume for plotting
+        ds_factor = np.max(self.final_reconstruction_volume.shape) // 200
+        plot_mask = zoom(self.final_reconstruction_volume, 1/ds_factor, order=0)
+
         # Extract surface mesh from 3D volume
-        verts, faces, _, _ = marching_cubes(self.final_reconstruction_volume)
+        verts, faces, _, _ = marching_cubes(plot_mask)
 
         # Plot using plotly
         fig = go.Figure(data=[
@@ -1088,14 +1095,29 @@ class Hiprova:
         fig.update_layout(scene=dict(
             xaxis_title='X Axis',
             yaxis_title='Y Axis',
-            zaxis_title='Z Axis'),
+            zaxis_title='Z Axis',
+            aspectmode="data"),
             margin=dict(t=0, b=0, l=0, r=0)
         )
 
-        fig.show()
+        fig.write_image(self.local_save_dir.joinpath("3d_reconstruction.png"), engine="kaleido")
+        # fig.show()
 
         return
     
+    def evaluate_reconstruction(self):
+        """
+        Method to compute the metrics to evaluate the reconstruction quality.
+        """
+
+        print(" - evaluating reconstruction")
+
+        # Compute sphericity of the reconstructed volume
+        sphericity = compute_sphericity(self.final_reconstruction_volume)
+
+
+        return
+
     def save_results(self):
         """
         Copy all created figures from Docker to external storage.
@@ -1106,5 +1128,24 @@ class Hiprova:
         # Upload local results to external storage 
         subprocess.call(f"cp -r {self.local_save_dir} {self.save_dir.parent}", shell=True)
         shutil.rmtree(self.local_save_dir)
+
+        return
+    
+    def run(self):
+        """
+        Method to run the full pipeline.
+        """
+
+        self.load_images()
+        self.load_masks()
+        self.apply_masks()
+        self.find_rotations()
+        self.prealignment()
+        self.perform_reconstruction()
+        # self.create_3d_volume()
+        # self.interpolate_3d_volume()
+        # self.plot_3d_volume()
+        # self.evaluate_reconstruction()
+        self.save_results()
 
         return

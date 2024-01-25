@@ -56,20 +56,9 @@ def main():
         hiprova = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
-            detector = "dalf",
             tform_tps = True,
-            full_resolution_level = 6,
         )
-        hiprova.load_images()
-        hiprova.load_masks()
-        hiprova.apply_masks()
-        hiprova.find_rotations()
-        hiprova.prealignment()
-        hiprova.perform_reconstruction()
-        # hiprova.create_3d_volume()
-        # hiprova.interpolate_3d_volume()
-        # hiprova.plot_3d_volume()
-        hiprova.save_results()
+        hiprova.run()
 
     return
 
