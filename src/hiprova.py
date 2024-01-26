@@ -68,10 +68,11 @@ class Hiprova:
         self.local_save_dir.joinpath("warps").mkdir(parents=True, exist_ok=True)
 
         # Set level at which to load the image
-        self.image_level_affine = self.config.image_level_affine
-        self.mask_level = self.image_level_affine-self.config.image_mask_level_diff
-        assert self.full_resolution_level_image <= self.image_level_affine, "Full resolution level should be lower than image level."
-        self.fullres_scaling = 2 ** (self.image_level_affine - self.full_resolution_level_image)
+        self.keypoint_level = self.config.keypoint_level
+        self.tform_level = self.config.tform_level
+        self.mask_level = self.keypoint_level-self.config.image_mask_level_diff
+        assert self.full_resolution_level_image <= self.keypoint_level, "Full resolution level should be lower than image level."
+        self.fullres_scaling = 2 ** (self.keypoint_level - self.full_resolution_level_image)
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -92,9 +93,9 @@ class Hiprova:
 
             # Load image
             if im_path.suffix == ".mrxs":
-                image = pyvips.Image.new_from_file(str(im_path), level=self.image_level_affine)
+                image = pyvips.Image.new_from_file(str(im_path), level=self.keypoint_level)
             elif im_path.suffix == ".tif":
-                image = pyvips.Image.new_from_file(str(im_path), page=self.image_level_affine)
+                image = pyvips.Image.new_from_file(str(im_path), page=self.keypoint_level)
             else:
                 raise ValueError("Sorry, only .tifs and .mrxs are supported.")
 
@@ -576,7 +577,7 @@ class Hiprova:
         ransac_scores = [scores[i] for i in range(len(matches)) if inliers[i]]
 
         # Modify some variables for proper plotting
-        savepath = self.local_save_dir.joinpath("keypoints", f"{tform}_keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
+        savepath = self.debug_dir.joinpath(f"{tform}_keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
         ref_points_plot = ref_features2['keypoints'].cpu().numpy()
         ref_points_plot = [cv2.KeyPoint(x, y, 1) for x, y in ref_points_plot]
         moving_points_plot = moving_features['keypoints'].cpu().numpy()
@@ -651,7 +652,9 @@ class Hiprova:
 
     def apply_tps_transform(self) -> None:
         """
-        Compute and apply thin plate splines transform.
+        Method to compute and apply thin plate splines transform. We still use
+        pyvips for the actual transform as torch can at most handle ~1000x1000 
+        transforms and we need these larger images for downstream tasks.
         """
 
         # Get image shapes
@@ -662,23 +665,46 @@ class Hiprova:
         c_ref = np.float32(self.points_ref_filt) / np.float32([w1,h1])
         c_moving = np.float32(self.points_moving_filt) / np.float32([w2,h2])
 
+        # Downsample image to prevent OOM in TPS grid
+        downsample = 2 ** (self.tform_level - self.keypoint_level)
+        moving_image_ds = cv2.resize(self.moving_image, (w2//downsample, h2//downsample), interpolation=cv2.INTER_NEAREST)
+
         # Compute theta from coordinates
-        moving_image = torch.tensor(self.moving_image).to(self.device).permute(2,0,1)[None, ...].float()
+        moving_image_ds = torch.tensor(moving_image_ds).to(self.device).permute(2,0,1)[None, ...].float()
         self.theta = tps_np.tps_theta_from_points(c_ref, c_moving, reduced=True, lambd=0.01)
         self.theta = torch.tensor(self.theta).to(self.device)[None, ...]
 
-        # Create grid to sample from
-        self.grid = tps_pth.tps_grid(self.theta, torch.tensor(c_moving, device=self.device), moving_image.shape)
+        # Create downsampled grid to sample from
+        self.grid = tps_pth.tps_grid(self.theta, torch.tensor(c_moving, device=self.device), moving_image_ds.shape)
+
+        # Upsample grid to accomodate original image
+        dx = self.grid.cpu().numpy()[0, :, :, 0]
+        dx = ((dx + 1) / 2) * (h2 - 1)
+
+        dy = self.grid.cpu().numpy()[0, :, :, 1] 
+        dy = ((dy + 1) / 2) * (w2 - 1)
+
+        # Upsample using affine rather than resize to account for shape rounding errors
+        scale_x = h2 / dx.shape[0]
+        scale_y = w2 / dy.shape[1]
+        dx = pyvips.Image.new_from_array(dx).affine((scale_y, 0, 0, scale_x))
+        dy = pyvips.Image.new_from_array(dy).affine((scale_y, 0, 0, scale_x))
+        index_map = dx.bandjoin([dy])
 
         # Apply transform
-        moving_image = F.grid_sample(moving_image, self.grid, align_corners=False)
-        self.moving_image_warped = moving_image[0].permute(1,2,0).cpu().numpy().astype(np.uint8)
+        moving_image = pyvips.Image.new_from_array(self.moving_image)
+        self.moving_image_warped = moving_image.mapim(
+            index_map, 
+            interpolate=pyvips.Interpolate.new('bicubic'), 
+            background=[255, 255, 255]
+        ).numpy().astype(np.uint8)
 
-        # Also apply to mask
-        moving_mask = torch.tensor(self.moving_mask).to(self.device)[None, None, ...].float()
-        moving_mask = F.grid_sample(moving_mask, self.grid, align_corners=False)
-        self.moving_mask_warped = moving_mask[0, 0].cpu().numpy().astype(np.uint8)
-        self.moving_mask_warped = ((self.moving_mask_warped > 0)*255).astype("uint8")
+        moving_mask = pyvips.Image.new_from_array(self.moving_mask)
+        self.moving_mask_warped = moving_mask.mapim(
+            index_map,
+            interpolate=pyvips.Interpolate.new('nearest'),
+            background=[0, 0, 0]
+        ).numpy().astype(np.uint8)
 
         # Compute new contour of mask
         self.moving_contour, _ = cv2.findContours(self.moving_mask_warped, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
@@ -990,7 +1016,7 @@ class Hiprova:
         slice_distance = self.config.slice_distance
 
         # Get in-plane downsample factor from image level
-        self.xy_downsample = 2 ** self.image_level_affine 
+        self.xy_downsample = 2 ** self.keypoint_level 
 
         # Block size is the number of empty slices we have to insert between
         # actual slices for a true to size 3D model.

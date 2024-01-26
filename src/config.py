@@ -7,15 +7,15 @@ class Config:
 
         # The level at which the images are processed for the reconstruction. Lower
         # levels and thus higher resolution are more accurate but also slower.
-        self.image_level_affine = 6
-        self.image_level_tps = 8
+        self.keypoint_level = 7
+        self.tform_level = 8
 
         # Difference in number of levels between the original images and the generated tissue masks
         self.image_mask_level_diff = 4
 
         # The level at which the full resolution images are reconstructed. For full 
         # resolution choose 0, for skipping this component choose -1. 
-        self.full_resolution_level = 6
+        self.full_resolution_level = 7
 
         # Minimum number of images required for a meaningful reconstruction
         self.min_images_for_reconstruction = 3
