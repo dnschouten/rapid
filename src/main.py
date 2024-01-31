@@ -49,16 +49,16 @@ def main():
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
 
     # Run 3D reconstruction
-    for pt in patients[2:]:
+    for pt in patients[1:]:
 
         print(f"\nProcessing patient {pt.name}")
 
-        hiprova = Hiprova(
+        constructor = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
-            tform_tps = True,
+            tform_tps = False,
         )
-        hiprova.run()
+        constructor.run()
 
     return
 

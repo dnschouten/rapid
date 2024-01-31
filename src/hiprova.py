@@ -14,7 +14,9 @@ import sys
 sys.path.append("/root/DALF_CVPR_2023")
 
 from pathlib import Path
-from skimage.measure import marching_cubes
+from skimage.measure import marching_cubes, ransac
+from skimage import transform
+from skimage.transform import EuclideanTransform
 import plotly.graph_objects as go
 from typing import Tuple, List
 from scipy.ndimage import distance_transform_edt
@@ -31,6 +33,8 @@ from modules.tps import numpy as tps_np
 from visualization import *
 from utils import *
 from config import Config
+from transforms import *
+from keypoints import *
 
 
 class Hiprova:
@@ -69,7 +73,8 @@ class Hiprova:
 
         # Set level at which to load the image
         self.keypoint_level = self.config.keypoint_level
-        self.tform_level = self.config.tform_level
+        self.tps_level = self.config.tps_level
+        self.evaluation_level = self.config.evaluation_level
         self.mask_level = self.keypoint_level-self.config.image_mask_level_diff
         assert self.full_resolution_level_image <= self.keypoint_level, "Full resolution level should be lower than image level."
         self.fullres_scaling = 2 ** (self.keypoint_level - self.full_resolution_level_image)
@@ -78,6 +83,9 @@ class Hiprova:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.ransac_thres_affine = self.config.ransac_thresholds[self.detector_name]
         self.ransac_thres_tps = self.ransac_thres_affine / 2
+
+        self.affine_ransac = self.config.affine_ransac
+        self.tps_ransac = self.config.tps_ransac
 
         return
     
@@ -127,7 +135,7 @@ class Hiprova:
 
         self.raw_fullres_images = [] 
 
-        for c, im_path in enumerate(self.image_paths):
+        for im_path in self.image_paths:
                 
             # Load image
             if im_path.suffix == ".mrxs":
@@ -268,7 +276,7 @@ class Hiprova:
         )
         inverse_fullres_mask = 255 - fullres_mask
 
-        # Mask image by adding white to image and then casting to uint8, faster than multiplication?
+        # Mask image by adding white to image and then casting to uint8
         masked_image_fullres = (fullres_image + inverse_fullres_mask).cast("uchar")
         self.fullres_images.append(masked_image_fullres)
         self.fullres_masks.append(fullres_mask)
@@ -320,24 +328,27 @@ class Hiprova:
 
         # Find common centerpoint of all ellipses to orient towards
         self.common_center = np.mean([i[0] for i in self.ellipses], axis=0).astype("int")
-        c = 1
             
         for image, mask, contour, rotation, center in zip(self.images, self.masks, self.contours, self.rotations, self.centerpoints):
 
             # Adjust rotation 
             rotation_matrix = cv2.getRotationMatrix2D(tuple(center), rotation, 1)
-            rotated_image = cv2.warpAffine(image, rotation_matrix, image.shape[:-1][::-1], borderValue=(255, 255, 255))
-            rotated_mask = cv2.warpAffine(mask, rotation_matrix, mask.shape[::-1], borderValue=(0, 0, 0))
-            rotated_contour = cv2.transform(np.expand_dims(contour, axis=0), rotation_matrix)
-            
+            rotated_image, rotated_mask, rotated_contour = apply_affine_transform(
+                image = image,
+                tform = rotation_matrix,
+                mask = mask,
+                contour = contour
+            )
+
             # Adjust translation 
             translation = self.common_center - center
             translation_matrix = np.float32([[1, 0, translation[0]], [0, 1, translation[1]]])
-
-            rotated_image = cv2.warpAffine(rotated_image, translation_matrix, rotated_image.shape[:-1][::-1], borderValue=(255, 255, 255))
-            rotated_mask = cv2.warpAffine(rotated_mask, translation_matrix, rotated_mask.shape[::-1], borderValue=(0, 0, 0))
-            rotated_mask = ((rotated_mask > 128)*255).astype("uint8")
-            rotated_contour = cv2.transform(rotated_contour, translation_matrix)
+            rotated_image, rotated_mask, rotated_contour = apply_affine_transform(
+                image = rotated_image,
+                tform = translation_matrix,
+                mask = rotated_mask,
+                contour = rotated_contour
+            )
 
             self.rotated_images.append(rotated_image)
             self.rotated_masks.append(rotated_mask)
@@ -368,45 +379,19 @@ class Hiprova:
 
             # Apply rotation in full resolution
             rotation_matrix_fullres = cv2.getRotationMatrix2D(tuple([i*self.fullres_scaling for i in center]), rotation, 1)
-
-            rotated_image_fullres = image_fullres.affine(
-                (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
-                interpolate = pyvips.Interpolate.new("bicubic"),
-                odx = rotation_matrix_fullres[0, 2],
-                ody = rotation_matrix_fullres[1, 2],
-                oarea = (0, 0, image_fullres.width, image_fullres.height),
-                background = 255
-            )
-            rotated_mask_fullres = mask_fullres.affine(
-                (rotation_matrix_fullres[0, 0], rotation_matrix_fullres[0, 1], rotation_matrix_fullres[1, 0], rotation_matrix_fullres[1, 1]),
-                interpolate = pyvips.Interpolate.new("nearest"),
-                odx = rotation_matrix_fullres[0, 2],
-                ody = rotation_matrix_fullres[1, 2],
-                oarea = (0, 0, mask_fullres.width, mask_fullres.height),
-                background = 0
+            rotated_image_fullres, rotated_mask_fullres = apply_affine_transform_fullres(
+                image = image_fullres,
+                tform = rotation_matrix_fullres,
+                mask = mask_fullres
             )
 
             # Apply translation in full resolution
             translation = self.common_center - center
-
             translation_matrix_fullres = np.float32([[1, 0, translation[0]*self.fullres_scaling], [0, 1, translation[1]*self.fullres_scaling]])
-            translation_matrix_fullres = np.float32([[1, 0, translation[0]*self.fullres_scaling_mask], [0, 1, translation[1]*self.fullres_scaling_mask]])
-
-            rotated_image_fullres = rotated_image_fullres.affine(
-                (translation_matrix_fullres[0, 0], translation_matrix_fullres[0, 1], translation_matrix_fullres[1, 0], translation_matrix_fullres[1, 1]),
-                interpolate = pyvips.Interpolate.new("bicubic"),
-                odx = translation_matrix_fullres[0, 2],
-                ody = translation_matrix_fullres[1, 2],
-                oarea = (0, 0, rotated_image_fullres.width, rotated_image_fullres.height),
-                background = 255
-            )
-            rotated_mask_fullres = rotated_mask_fullres.affine(
-                (translation_matrix_fullres[0, 0], translation_matrix_fullres[0, 1], translation_matrix_fullres[1, 0], translation_matrix_fullres[1, 1]),
-                interpolate = pyvips.Interpolate.new("nearest"),
-                odx = translation_matrix_fullres[0, 2],
-                ody = translation_matrix_fullres[1, 2],
-                oarea = (0, 0, rotated_mask_fullres.width, rotated_mask_fullres.height),
-                background = 0
+            rotated_image_fullres, rotated_mask_fullres = apply_affine_transform_fullres(
+                image = rotated_image_fullres,
+                tform = translation_matrix_fullres,
+                mask = rotated_mask_fullres
             )
 
             self.rotated_images_fullres.append(rotated_image_fullres)
@@ -431,9 +416,8 @@ class Hiprova:
         Wrapper function to get the keypoints from DALF.
         """
 
-        # Initialize DALF detector and matcher
+        # Initialize DALF detector
         self.dalf_detector = DALF(dev=self.device)
-        self.dalf_matcher = cv2.BFMatcher(crossCheck = True)
 
         # Get reference image and moving image
         ref_image = self.final_images[self.ref]
@@ -459,9 +443,19 @@ class Hiprova:
         points_ref_filt = np.float32([points_ref[m.queryIdx].pt for m in matches])
         points_moving_filt = np.float32([points_moving[m.trainIdx].pt for m in matches])
 
-        # Filter matches with RANSAC
-        thres = self.ransac_thres_affine if tform == "affine" else self.ransac_thres_tps
-        inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = thres)
+        # Use RANSAC to further filter matches
+        if tform == "affine":
+            res_thres = int(moving_image.shape[0] * self.ransac_thres_affine)
+            _, inliers = ransac(
+                (points_moving_filt, points_ref_filt),
+                EuclideanTransform, 
+                min_samples=int(len(points_ref_filt)/2), 
+                residual_threshold=res_thres,
+                max_trials = 1000
+            )
+        elif tform == "tps":
+            inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = self.ransac_thres_tps)
+
         ransac_matches = [matches[i] for i in range(len(matches)) if inliers[i]]
 
         # Plot resulting keypoints and matches
@@ -477,9 +471,7 @@ class Hiprova:
         )
 
         # Convert to numpy and save
-        self.points_ref = np.float32([i.pt for i in points_ref]) 
         self.points_ref_filt = points_ref_filt
-        self.points_moving = np.float32([i.pt for i in points_moving])
         self.points_moving_filt = points_moving_filt
         self.ref_image = ref_image
         self.ref_mask = self.final_masks[self.ref]
@@ -492,6 +484,95 @@ class Hiprova:
             self.get_keypoints_fullres()
 
         return
+
+    def get_lightglue_keypoints(self, tform: str) -> None:
+        """
+        Wrapper function to get the keypoints from lightglue.
+        """
+
+        # Initialize lightglue detector and matcher
+        self.lightglue_detector = SuperPoint(max_num_keypoints=8192).eval().cuda()  
+        self.lightglue_matcher = LightGlue(features='superpoint').eval().cuda() 
+
+        # Get reference image and extract features 
+        ref_image = self.final_images[self.ref]
+        ref_image_tensor = torch.tensor(ref_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
+        ref_features = self.lightglue_detector.extract(ref_image_tensor)
+
+        # Get image and apply rotation
+        moving_image = self.rotated_images[self.mov]
+        moving_mask = self.rotated_masks[self.mov]
+        moving_contour = self.rotated_contours[self.mov]
+
+        # Apply flipping for regular images
+        rotation_matrix = cv2.getRotationMatrix2D(tuple(self.common_center.astype("float")), self.rot, 1)
+        moving_image = cv2.warpAffine(moving_image, rotation_matrix, moving_image.shape[:-1][::-1], borderValue=(255, 255, 255))
+        moving_mask = cv2.warpAffine(moving_mask, rotation_matrix, moving_mask.shape[::-1], borderValue=(0, 0, 0))
+        moving_contour = np.squeeze(cv2.transform(np.expand_dims(moving_contour, axis=0), rotation_matrix))
+
+        # Convert to tensor and extract features
+        moving_image_tensor = torch.tensor(moving_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
+        moving_features = self.lightglue_detector.extract(moving_image_tensor)
+        
+        # Find matches with features from reference image
+        matches01 = self.lightglue_matcher({'image0': ref_features, 'image1': moving_features})
+        ref_features2, moving_features, matches01 = [rbd(x) for x in [ref_features, moving_features, matches01]] 
+        matches = matches01['matches']
+        scores = [np.round(float(i), 5) for i in matches01['scores'].detach().cpu().numpy()]
+
+        # Get keypoints from both images
+        points_ref_filt = np.float32([i.astype("int") for i in ref_features2['keypoints'][matches[..., 0]].cpu().numpy()])
+        points_moving_filt = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
+
+        # Use RANSAC to further filter matches
+        if tform == "affine":
+            res_thres = int(moving_image.shape[0] * self.ransac_thres_affine)
+            _, inliers = ransac(
+                (points_moving_filt, points_ref_filt),
+                EuclideanTransform, 
+                min_samples=int(len(points_ref_filt)/2), 
+                residual_threshold=res_thres,
+                max_trials = 1000
+            )
+        elif tform == "tps":
+            inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = self.ransac_thres_tps)
+        ransac_matches = [matches[i] for i in range(len(matches)) if inliers[i]]
+        ransac_scores = [scores[i] for i in range(len(matches)) if inliers[i]]
+
+        # Modify some variables for proper plotting
+        savepath = self.local_save_dir.joinpath("keypoints", f"{tform}_keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
+        ref_points_plot = ref_features2['keypoints'].cpu().numpy()
+        ref_points_plot = [cv2.KeyPoint(x, y, 1) for x, y in ref_points_plot]
+        moving_points_plot = moving_features['keypoints'].cpu().numpy()
+        moving_points_plot = [cv2.KeyPoint(x, y, 1) for x, y in moving_points_plot]
+
+        plot_matches = [cv2.DMatch(int(a.cpu()), int(b.cpu()), s) for (a, b), s in zip(matches, scores)]
+        plot_ransac_matches = [cv2.DMatch(int(a.cpu()), int(b.cpu()), s) for (a, b), s in zip(ransac_matches, ransac_scores)]
+
+        plot_keypoint_pairs(
+            ref_image=ref_image, 
+            moving_image=moving_image,
+            ref_points=ref_points_plot, 
+            moving_points=moving_points_plot, 
+            matches=plot_matches,
+            ransac_matches=plot_ransac_matches,
+            savepath=savepath
+        )
+
+        # Convert back to numpy and save
+        self.points_ref_filt = points_ref_filt
+        self.points_moving_filt = points_moving_filt
+        self.ref_image = self.final_images[self.ref]
+        self.ref_mask = self.final_masks[self.ref]
+        self.moving_image = (moving_image_tensor.cpu().numpy().transpose((1, 2, 0))*255).astype("uint8")
+        self.moving_mask = moving_mask
+        self.moving_contour = moving_contour
+        self.matches = [cv2.DMatch(int(a), int(b), s) for (a, b), s in zip(matches.cpu(), scores)]
+
+        if self.full_resolution:
+            self.get_keypoints_fullres()
+
+        return 
 
     def get_keypoints_fullres(self) -> None:
         """
@@ -531,103 +612,10 @@ class Hiprova:
 
         return
 
-    def get_lightglue_keypoints(self, tform: str) -> None:
-        """
-        Wrapper function to get the keypoints from lightglue.
-        """
-
-        # Initialize lightglue detector and matcher
-        self.lightglue_detector = SuperPoint(max_num_keypoints=2048).eval().cuda()  
-        self.lightglue_matcher = LightGlue(features='superpoint').eval().cuda() 
-
-        # Get reference image and extract features 
-        ref_image = self.final_images[self.ref]
-        ref_image_tensor = torch.tensor(ref_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
-        ref_features = self.lightglue_detector.extract(ref_image_tensor)
-
-        # Get image and apply rotation
-        moving_image = self.rotated_images[self.mov]
-        moving_mask = self.rotated_masks[self.mov]
-        moving_contour = self.rotated_contours[self.mov]
-
-        # Apply flipping for regular images
-        rotation_matrix = cv2.getRotationMatrix2D(tuple(self.common_center.astype("float")), self.rot, 1)
-        moving_image = cv2.warpAffine(moving_image, rotation_matrix, moving_image.shape[:-1][::-1], borderValue=(255, 255, 255))
-        moving_mask = cv2.warpAffine(moving_mask, rotation_matrix, moving_mask.shape[::-1], borderValue=(0, 0, 0))
-        moving_contour = np.squeeze(cv2.transform(np.expand_dims(moving_contour, axis=0), rotation_matrix))
-
-        # Convert to tensor and extract features
-        moving_image_tensor = torch.tensor(moving_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
-        moving_features = self.lightglue_detector.extract(moving_image_tensor)
-        
-        # Find matches with features from reference image
-        matches01 = self.lightglue_matcher({'image0': ref_features, 'image1': moving_features})
-        ref_features2, moving_features, matches01 = [rbd(x) for x in [ref_features, moving_features, matches01]] 
-        matches = matches01['matches']
-        scores = [np.round(float(i), 5) for i in matches01['scores'].detach().cpu().numpy()]
-
-        # Get keypoints from both images
-        points_ref_filt = np.float32([i.astype("int") for i in ref_features2['keypoints'][matches[..., 0]].cpu().numpy()])
-        points_moving_filt = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
-
-        # Filter matches with RANSAC
-        thres = self.ransac_thres_affine if tform == "affine" else self.ransac_thres_tps
-        inliers = RANSAC.nr_RANSAC(points_ref_filt, points_moving_filt, self.device, thr = thres)
-        ransac_matches = [matches[i] for i in range(len(matches)) if inliers[i]]
-        ransac_scores = [scores[i] for i in range(len(matches)) if inliers[i]]
-
-        # Modify some variables for proper plotting
-        savepath = self.debug_dir.joinpath(f"{tform}_keypoints_{self.mov}_to_{self.ref}_rot_{self.rot}.png")
-        ref_points_plot = ref_features2['keypoints'].cpu().numpy()
-        ref_points_plot = [cv2.KeyPoint(x, y, 1) for x, y in ref_points_plot]
-        moving_points_plot = moving_features['keypoints'].cpu().numpy()
-        moving_points_plot = [cv2.KeyPoint(x, y, 1) for x, y in moving_points_plot]
-
-        plot_matches = [cv2.DMatch(int(a.cpu()), int(b.cpu()), s) for (a, b), s in zip(matches, scores)]
-        plot_ransac_matches = [cv2.DMatch(int(a.cpu()), int(b.cpu()), s) for (a, b), s in zip(ransac_matches, ransac_scores)]
-
-        plot_keypoint_pairs(
-            ref_image=ref_image, 
-            moving_image=moving_image,
-            ref_points=ref_points_plot, 
-            moving_points=moving_points_plot, 
-            matches=plot_matches,
-            ransac_matches=plot_ransac_matches,
-            savepath=savepath
-        )
-
-        # Convert back to numpy and save
-        self.points_ref = ref_features2['keypoints'].cpu().numpy()
-        self.points_ref_filt = points_ref_filt
-        self.points_moving = moving_features['keypoints'].cpu().numpy()
-        self.points_moving_filt = points_moving_filt
-        self.ref_image = self.final_images[self.ref]
-        self.ref_mask = self.final_masks[self.ref]
-        self.moving_image = (moving_image_tensor.cpu().numpy().transpose((1, 2, 0))*255).astype("uint8")
-        self.moving_mask = moving_mask
-        self.moving_contour = moving_contour
-        self.matches = [cv2.DMatch(int(a), int(b), s) for (a, b), s in zip(matches.cpu(), scores)]
-
-        if self.full_resolution:
-            self.get_keypoints_fullres()
-
-        return 
-
-    def apply_transform(self, tform: str = "affine", ransac: bool = True) -> None:
+    def apply_transform(self, tform: str = "affine") -> None:
         """
         Wrapper function to apply the transform based on the keypoints found.
         """
-
-        # Apply RANSAC filtering
-        if ransac:
-
-            # Apply ransac to further filter plausible matches
-            thres = self.ransac_thres_affine if tform == "affine" else self.ransac_thres_tps
-            inliers = RANSAC.nr_RANSAC(self.points_ref_filt, self.points_moving_filt, self.device, thr = thres)
-            ransac_matches = [self.matches[i] for i in range(len(self.matches)) if inliers[i]]
-
-            self.points_ref_filt = np.float32([self.points_ref[m.queryIdx] for m in ransac_matches])
-            self.points_moving_filt = np.float32([self.points_moving[m.trainIdx] for m in ransac_matches])
 
         # Apply affine or TPS transform
         if tform == "tps":
@@ -657,6 +645,16 @@ class Hiprova:
         transforms and we need these larger images for downstream tasks.
         """
 
+        # Apply non rigid RANSAC for TPS transforms. Affine uses openCV RANSAC.
+        if self.tps_ransac:
+
+            # Apply ransac to further filter plausible matches
+            inliers = RANSAC.nr_RANSAC(self.points_ref_filt, self.points_moving_filt, self.device, thr = self.ransac_thres_tps)
+            ransac_matches = [self.matches[i] for i in range(len(self.matches)) if inliers[i]]
+
+            self.points_ref_filt = np.float32([self.points_ref[m.queryIdx] for m in ransac_matches])
+            self.points_moving_filt = np.float32([self.points_moving[m.trainIdx] for m in ransac_matches])
+
         # Get image shapes
         h1, w1 = self.ref_image.shape[:2]
         h2, w2 = self.moving_image.shape[:2]
@@ -666,12 +664,12 @@ class Hiprova:
         c_moving = np.float32(self.points_moving_filt) / np.float32([w2,h2])
 
         # Downsample image to prevent OOM in TPS grid
-        downsample = 2 ** (self.tform_level - self.keypoint_level)
-        moving_image_ds = cv2.resize(self.moving_image, (w2//downsample, h2//downsample), interpolation=cv2.INTER_NEAREST)
+        downsample = 2 ** (self.tps_level - self.keypoint_level)
+        moving_image_ds = cv2.resize(self.moving_image, (w2//downsample, h2//downsample), interpolation=cv2.INTER_AREA)
 
         # Compute theta from coordinates
         moving_image_ds = torch.tensor(moving_image_ds).to(self.device).permute(2,0,1)[None, ...].float()
-        self.theta = tps_np.tps_theta_from_points(c_ref, c_moving, reduced=True, lambd=0.01)
+        self.theta = tps_np.tps_theta_from_points(c_ref, c_moving, reduced=True, lambd=0.1)
         self.theta = torch.tensor(self.theta).to(self.device)[None, ...]
 
         # Create downsampled grid to sample from
@@ -679,16 +677,21 @@ class Hiprova:
 
         # Upsample grid to accomodate original image
         dx = self.grid.cpu().numpy()[0, :, :, 0]
-        dx = ((dx + 1) / 2) * (h2 - 1)
+        dx = ((dx + 1) / 2) * (w2 - 1)
 
         dy = self.grid.cpu().numpy()[0, :, :, 1] 
-        dy = ((dy + 1) / 2) * (w2 - 1)
+        dy = ((dy + 1) / 2) * (h2 - 1)
 
         # Upsample using affine rather than resize to account for shape rounding errors
-        scale_x = h2 / dx.shape[0]
-        scale_y = w2 / dy.shape[1]
-        dx = pyvips.Image.new_from_array(dx).affine((scale_y, 0, 0, scale_x))
-        dy = pyvips.Image.new_from_array(dy).affine((scale_y, 0, 0, scale_x))
+        dx = pyvips.Image.new_from_array(dx).resize(downsample)
+        dy = pyvips.Image.new_from_array(dy).resize(downsample)
+
+        # Ensure deformation field is exactly as large as the image. Discepancies can
+        # occur due to rounding errors in the shape of the image.
+        if (dx.width != w2) or (dx.height != h2):
+            dx = dx.gravity("centre", w2, h2)
+            dy = dy.gravity("centre", w2, h2)
+
         index_map = dx.bandjoin([dy])
 
         # Apply transform
@@ -769,23 +772,25 @@ class Hiprova:
         Compute a limited affine transform based on rotation and translation.
         """
 
-        # Compute centroids
-        centroid_fixed = np.mean(self.points_ref_filt, axis=0)
-        centroid_moving = np.mean(self.points_moving_filt, axis=0)
+        # Filter matches based on RANSAC
+        if self.affine_ransac:
+            res_thres = int(self.moving_image.shape[0] * self.ransac_thres_affine)
+            affine_matrix, self.affine_inliers = ransac(
+                (self.points_moving_filt, self.points_ref_filt),
+                EuclideanTransform, 
+                min_samples=int(len(self.points_ref_filt)/2), 
+                residual_threshold=res_thres,
+                max_trials=1000
+            )
+            affine_matrix = affine_matrix.params[:-1, :]
 
-        # Shift the keypoints so that both sets have a centroid at the origin
-        points_ref_centered = self.points_ref_filt - centroid_fixed
-        points_moving_centered = self.points_moving_filt - centroid_moving
-
-        # Compute the rotation matrix
-        H = np.dot(points_moving_centered.T, points_ref_centered)
-        U, _, Vt = np.linalg.svd(H)
-        R = np.dot(Vt.T, U.T)
-
-        # Create the combined rotation and translation matrix
-        affine_matrix = np.zeros((2, 3))
-        affine_matrix[:2, :2] = R
-        affine_matrix[:2, 2] = centroid_fixed - np.dot(R, centroid_moving)
+        else:
+            # Directly estimate limited affine transform with only rotation and translation
+            affine_matrix = transform.estimate_transform(
+                "euclidean", 
+                self.points_moving_filt, 
+                self.points_ref_filt
+            ).params[:-1, :]
 
         # Actually warp the images
         rows, cols, _ = self.moving_image.shape
@@ -813,28 +818,21 @@ class Hiprova:
         Method to apply the affine transform to the full resolution images.
         """
 
-        # Compute centroids
-        centroid_fixed = np.mean(self.points_ref_filt, axis=0)
-        centroid_fixed = [i * self.fullres_scaling for i in centroid_fixed]
-        centroid_moving = np.mean(self.points_moving_filt, axis=0)
-        centroid_moving = [i * self.fullres_scaling for i in centroid_moving]
-
-        # Shift the keypoints so that both sets have a centroid at the origin
+        # Apply scaling factor for full resolution transform
         points_ref_filt = np.float32([i * self.fullres_scaling for i in self.points_ref_filt])
         points_moving_filt = np.float32([i * self.fullres_scaling for i in self.points_moving_filt])
 
-        points_ref_centered = points_ref_filt - centroid_fixed
-        points_moving_centered = points_moving_filt - centroid_moving
+        if self.affine_ransac:
+            # Use low res affine RANSAC
+            points_ref_filt = points_ref_filt[self.affine_inliers]
+            points_moving_filt = points_moving_filt[self.affine_inliers]
 
-        # Compute the rotation matrix
-        H = np.dot(points_moving_centered.T, points_ref_centered)
-        U, _, Vt = np.linalg.svd(H)
-        R = np.dot(Vt.T, U.T)
-
-        # Create the combined rotation and translation matrix
-        affine_matrix = np.zeros((2, 3))
-        affine_matrix[:2, :2] = R
-        affine_matrix[:2, 2] = centroid_fixed - np.dot(R, centroid_moving)
+        # Directly estimate limited affine transform with only rotation and translation
+        affine_matrix = transform.estimate_transform(
+            "euclidean", 
+            points_moving_filt, 
+            points_ref_filt
+        ).params[:-1, :]
 
         # Actually warp the images
         self.moving_image_fullres_warped = self.moving_image_fullres.affine(
@@ -875,13 +873,10 @@ class Hiprova:
         self.ref_indices = list(np.arange(0, mid_slice)[::-1] + 1) + list(np.arange(mid_slice+1, len(self.rotated_images)) - 1)
         self.ref_indices = list(map(int, self.ref_indices))
 
-        self.tform_matrices = [None] * len(self.rotated_images)
-        self.best_rotations = [None] * len(self.rotated_images)
-
         # Iteratively perform keypoint matching for adjacent pairs and update the reference points.
         for self.mov, self.ref in zip(self.moving_indices, self.ref_indices):
 
-            self.best_overlap = 0
+            best_num_matches = 0
 
             # Optional correction for tissue flips
             if correct_flip:
@@ -895,37 +890,97 @@ class Hiprova:
                 # Get keypoints from either lightglue or dalf
                 self.get_keypoints(tform=tform, detector=detector)
 
-                # Apply transform based on keypoints, optionally use RANSAC filtering
-                self.apply_transform(tform=tform, ransac=False)
-                
-                # Compute which part of the smallest mask falls within the other mask
-                all_mask = [self.moving_mask_warped, self.ref_mask]
-                min_idx = np.argmin([np.sum(i) for i in all_mask])
-                overlap = np.sum(all_mask[min_idx] & all_mask[1-min_idx]) / np.sum(all_mask[min_idx])
+                """
+                ############ EXPERIMENTAL ###############
+                # Compute flipped version of image
+                rotation_matrix = cv2.getRotationMatrix2D(tuple(self.common_center.astype("float")), self.rot, 1)
+                moving_image, moving_mask, moving_contour = self.rotated_images[self.mov], self.rotated_masks[self.mov], self.rotated_contours[self.mov]
+                moving_image, moving_mask, moving_contour = apply_affine_transform(
+                    image = moving_image,
+                    tform = rotation_matrix,
+                    mask = moving_mask,
+                    contour = moving_contour
+                )
+                ref_image = self.final_images[self.ref]
 
-                if overlap > self.best_overlap:
-                    self.best_overlap = overlap
+                # Extract keypoints
+                ref_points, moving_points = get_lightglue_keypoints(ref_image, moving_image)
+
+                # Apply transforms
+                if tform == "affine":
+                    affine_matrix = estimate_affine_transform(
+                        moving_points = moving_points, 
+                        ref_points = ref_points, 
+                        image = moving_image, 
+                        ransac = self.affine_ransac, 
+                        ransac_thres = self.ransac_thres_affine
+                    )
+                    moving_image_warped, moving_mask_warped, moving_contour_warped = apply_affine_transform(
+                        image = moving_image,
+                        tform = affine_matrix,
+                        mask = moving_mask,
+                        contour = moving_contour
+                    )
+                elif tform == "tps":
+                    index_map = estimate_tps_transform(
+                        moving_image = moving_image,
+                        ref_image = ref_image,
+                        moving_points = moving_points, 
+                        ref_points = ref_points, 
+                        ransac=self.tps_ransac, 
+                        ransac_thres_tps = self.tps_ransac_thres,
+                        tps_level = self.tps_level,
+                        keypoint_level = self.keypoint_level,
+                        device = self.device
+                    )
+                    moving_image_warped, moving_mask_warped, moving_contour_warped = apply_tps_transform(
+                        moving_image = moving_image,
+                        moving_mask = moving_mask,
+                        index_map = index_map    
+                    )
+
+                # Compute which part of the smallest mask falls within the other mask
+                if len(ref_points) > best_num_matches:
+                    best_num_matches = len(ref_points)
 
                     # Save final image and contours
                     self.final_images[self.mov] = self.moving_image_warped.astype("uint8")
                     self.final_masks[self.mov] = self.moving_mask_warped.astype("uint8")
                     self.final_contours[self.mov] = self.moving_contour.astype("int")
-                    self.best_rotations[self.mov] = self.rot
+
+                    # Perform full resolution reconstruction
+                    if self.full_resolution:
+                        self.reconstruction_fullres(tform=tform)
+
+
+                ############ EXPERIMENTAL ############
+                """
+
+                # Apply transform based on keypoints, optionally use RANSAC filtering
+                self.apply_transform(tform=tform)
+                
+                # Compute which part of the smallest mask falls within the other mask
+                if len(self.matches) > best_num_matches:
+                    best_num_matches = len(self.matches)
+
+                    # Save final image and contours
+                    self.final_images[self.mov] = self.moving_image_warped.astype("uint8")
+                    self.final_masks[self.mov] = self.moving_mask_warped.astype("uint8")
+                    self.final_contours[self.mov] = self.moving_contour.astype("int")
 
                     # Perform full resolution reconstruction
                     if self.full_resolution:
                         self.reconstruction_fullres(tform=tform)
 
                 # Plot warped images as sanity check
-                save_path = self.local_save_dir.joinpath("warps", f"{tform}_warped_{self.mov}_rot_{self.rot}.png")
+                savepath = self.local_save_dir.joinpath("warps", f"{tform}_warped_{self.mov}_rot_{self.rot}.png")
                 plot_warped_images(
-                    self.ref_image, 
-                    self.ref_mask,
-                    self.moving_image, 
-                    self.moving_image_warped, 
-                    self.moving_mask_warped,
-                    overlap, 
-                    save_path
+                    ref_image = self.ref_image, 
+                    ref_mask = self.ref_mask,
+                    moving_image = self.moving_image, 
+                    moving_image_warped = self.moving_image_warped, 
+                    moving_mask_warped = self.moving_mask_warped,
+                    savepath = savepath
                 )
 
         return
@@ -961,11 +1016,8 @@ class Hiprova:
 
         # Always perform affine reconstruction
         self.reconstruction(tform="affine", detector=self.detector_name, correct_flip=True)
-        self.final_reconstruction = np.stack(self.final_images, axis=-1)
         plot_final_reconstruction(
-            final_reconstruction = self.final_reconstruction, 
-            final_contours = self.final_contours, 
-            image_paths = self.image_paths, 
+            final_images = self.final_images, 
             save_dir = self.local_save_dir, 
             tform = "affine"
         )
@@ -989,16 +1041,11 @@ class Hiprova:
                 del self.final_images_fullres, self.final_masks_fullres
 
             self.reconstruction(tform="tps", detector=self.detector_name, correct_flip=False)
-            self.final_reconstruction = np.stack(self.final_images, axis=-1)
             plot_final_reconstruction(
-                final_reconstruction = self.final_reconstruction, 
-                final_contours = self.final_contours, 
-                image_paths = self.image_paths, 
+                final_images = self.final_images, 
                 save_dir = self.local_save_dir, 
                 tform = "tps"
             )
-
-        self.final_reconstruction_mask = np.stack(self.final_masks, axis=-1)
 
         return
 
@@ -1015,33 +1062,39 @@ class Hiprova:
         slice_thickness = self.config.slice_thickness
         slice_distance = self.config.slice_distance
 
-        # Get in-plane downsample factor from image level
-        self.xy_downsample = 2 ** self.keypoint_level 
+        # Downsample images again in order to create 3D volume
+        partial_xy_downsample = 2 ** (self.evaluation_level - self.keypoint_level)
+        total_xy_downsample = 2 ** self.evaluation_level
+        new_size = tuple(int(i / partial_xy_downsample) for i in self.final_images[0].shape[:2][::-1])
+        
+        self.final_images = [cv2.resize(i, new_size, interpolation=cv2.INTER_AREA) for i in self.final_images]
+        self.final_masks = [cv2.resize(i, new_size, interpolation=cv2.INTER_NEAREST) for i in self.final_masks]
+        self.final_contours = [(c / partial_xy_downsample).astype(np.int32) for c in self.final_contours]
 
         # Block size is the number of empty slices we have to insert between
         # actual slices for a true to size 3D model.
-        self.z_downsample = slice_distance / self.xy_downsample
-        self.block_size = int(np.round(self.z_downsample * slice_thickness)-1)
+        z_downsample = slice_distance / total_xy_downsample
+        self.block_size = int(np.round(z_downsample * slice_thickness)-1)
 
         # Pre-allocate 3D volumes 
         self.final_reconstruction_3d = np.zeros(
-            (self.final_reconstruction.shape[0], 
-             self.final_reconstruction.shape[1], 
-             self.block_size*(self.final_reconstruction.shape[3]+1),
-             self.final_reconstruction.shape[2]),
+            (self.final_images[0].shape[0], 
+             self.final_images[0].shape[1], 
+             self.block_size*(len(self.final_images)+1),
+             self.final_images[0].shape[2]),
              dtype="uint8"
         )
         self.final_reconstruction_3d_mask = np.zeros(
-            (self.final_reconstruction_mask.shape[0], 
-             self.final_reconstruction_mask.shape[1], 
-             self.block_size*(self.final_reconstruction_mask.shape[2]+1)),
+            (self.final_masks[0].shape[0],  
+             self.final_masks[0].shape[1],  
+             self.block_size*(len(self.final_masks)+1)),                  
              dtype="uint8"
         )
 
         # Populate actual slices
-        for i in range(self.final_reconstruction.shape[3]):
-            self.final_reconstruction_3d[:, :, self.block_size*(i+1), :] = self.final_reconstruction[:, :, :, i]
-            self.final_reconstruction_3d_mask[:, :, self.block_size*(i+1)] = self.final_reconstruction_mask[:, :, i]
+        for c, (im, mask) in enumerate(zip(self.final_images, self.final_masks)):
+            self.final_reconstruction_3d[:, :, self.block_size*(c+1), :] = im
+            self.final_reconstruction_3d_mask[:, :, self.block_size*(c+1)] = mask
             
         self.final_reconstruction_3d[self.final_reconstruction_3d == 255] = 0
 
@@ -1054,7 +1107,7 @@ class Hiprova:
         """
 
         self.final_reconstruction_volume = copy.copy(self.final_reconstruction_3d_mask)
-        self.filled_slices = [self.block_size*(i+1) for i in range(self.final_reconstruction.shape[3])]
+        self.filled_slices = [self.block_size*(i+1) for i in range(len(self.final_images))]
 
         # Loop over slices for interpolation
         for i in range(len(self.filled_slices)-1):
@@ -1084,8 +1137,7 @@ class Hiprova:
                 cv2.drawContours(mask, [contour.astype("int")], -1, (255),thickness=cv2.FILLED)
 
                 savepath = self.local_save_dir.joinpath(f"contour_{self.filled_slices[i]+j+1}.png")
-                if False:
-                    plot_interpolated_contour(slice_a, contour_a, mask, contour, slice_b, contour_b, savepath)
+                # plot_interpolated_contour(slice_a, contour_a, mask, contour, slice_b, contour_b, savepath)
 
                 self.final_reconstruction_volume[:, :, self.filled_slices[i]+j+1] = mask
 
@@ -1097,12 +1149,8 @@ class Hiprova:
         Method to plot all the levels of the 3D reconstructed volume in a single 3D plot.
         """
     
-        # Downsize volume for plotting
-        ds_factor = np.max(self.final_reconstruction_volume.shape) // 200
-        plot_mask = zoom(self.final_reconstruction_volume, 1/ds_factor, order=0)
-
         # Extract surface mesh from 3D volume
-        verts, faces, _, _ = marching_cubes(plot_mask)
+        verts, faces, _, _ = marching_cubes(self.final_reconstruction_volume)
 
         # Plot using plotly
         fig = go.Figure(data=[
@@ -1127,7 +1175,7 @@ class Hiprova:
         )
 
         fig.write_image(self.local_save_dir.joinpath("3d_reconstruction.png"), engine="kaleido")
-        # fig.show()
+        fig.show()
 
         return
     
@@ -1138,9 +1186,13 @@ class Hiprova:
 
         print(" - evaluating reconstruction")
 
-        # Compute sphericity of the reconstructed volume
-        sphericity = compute_sphericity(self.final_reconstruction_volume)
+        tre = compute_tre_keypoints()
 
+        # Compute sphericity of the reconstructed volume
+        # self.sphericity = compute_sphericity(self.final_reconstruction_volume)
+
+        # Compute dice score of all adjacent masks
+        # reconstruction_dice = compute_reconstruction_dice(masks = self.final_masks)
 
         return
 
@@ -1171,7 +1223,7 @@ class Hiprova:
         # self.create_3d_volume()
         # self.interpolate_3d_volume()
         # self.plot_3d_volume()
-        # self.evaluate_reconstruction()
+        self.evaluate_reconstruction()
         self.save_results()
 
         return

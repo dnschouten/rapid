@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List, Any, Tuple
 
+from evaluation import compute_dice
+
 
 def plot_initial_reconstruction(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     """
@@ -158,7 +160,7 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
 
     return
 
-def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image: np.ndarray, moving_image_warped: np.ndarray, moving_mask_warped: np.ndarray, overlap: float, savepath: pathlib.Path) -> None:
+def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image: np.ndarray, moving_image_warped: np.ndarray, moving_mask_warped: np.ndarray, savepath: pathlib.Path) -> None:
     """
     Plot the warped moving image and the overlap with the reference image.
     """
@@ -168,6 +170,9 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
     cnt_moving = np.squeeze(max(cnt_moving, key=cv2.contourArea))
     cnt_ref, _ = cv2.findContours(ref_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     cnt_ref = np.squeeze(max(cnt_ref, key=cv2.contourArea))
+
+    # Compute overlap
+    overlap = compute_dice(moving_mask_warped, ref_mask)
 
     # Save image of result 
     plt.figure(figsize=(10, 5))
@@ -194,7 +199,7 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
 
     return
 
-def plot_final_reconstruction(final_reconstruction: np.ndarray, final_contours: List[List], image_paths: List[pathlib.Path], save_dir: pathlib.Path, tform: str) -> None:
+def plot_final_reconstruction(final_images: List, save_dir: pathlib.Path, tform: str) -> None:
     """
     Plot final reconstruction using the affine transformation computed from the detected keypoints.
     """
@@ -202,23 +207,12 @@ def plot_final_reconstruction(final_reconstruction: np.ndarray, final_contours: 
     # Overview figure of the slices
     savepath = save_dir.joinpath(f"03_final_reconstruction_{tform}.png")
     plt.figure(figsize=(10, 5))
-    for i in range(final_reconstruction.shape[-1]):
-        plt.subplot(1, final_reconstruction.shape[-1], i+1)
-        plt.imshow(final_reconstruction[:, :, :, i])
+    for c, im in enumerate(final_images):
+        plt.subplot(1, len(final_images), c+1)
+        plt.imshow(im)
         plt.axis("off")
     plt.savefig(savepath, dpi=300, bbox_inches="tight")
     plt.close()
-
-    # # Overview figure of the overlapping contours
-    # savepath = save_dir.joinpath("03_final_reconstruction_contours.png")
-    # plt.figure(figsize=(6, 6))
-    # plt.imshow(np.zeros((final_reconstruction.shape[:2])), cmap="gray")
-    # for cnt in final_contours:
-    #     plt.scatter(cnt[:, 0], cnt[:, 1])
-    # plt.axis("off")
-    # plt.legend([i.stem for i in image_paths])
-    # plt.savefig(savepath)
-    # plt.close()
     
     return
 

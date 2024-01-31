@@ -1,0 +1,212 @@
+import cv2
+import numpy as np
+import pyvips
+import torch
+
+from skimage import transform
+from skimage.transform import EuclideanTransform
+from skimage.measure import ransac
+from typing import List, Any
+
+from modules.tps import RANSAC
+from modules.tps import pytorch as tps_pth
+from modules.tps import numpy as tps_np
+
+
+def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac_thres: float = 0.05) -> tuple([np.ndarray, np.ndarray, np.ndarray]):
+    """
+    Function to apply RANSAC to filter plausible matches for affine transform.
+    """
+
+    # Apply ransac to further filter plausible matches
+    res_thres = int(image.shape[0] * ransac_thres)
+    _, inliers = ransac(
+        (moving_points, ref_points),
+        EuclideanTransform, 
+        min_samples=int(len(ref_points)/2), 
+        residual_threshold=res_thres,
+        max_trials=1000
+    )
+
+    # Filter matches based on RANSAC
+    ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
+    moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
+
+    return ref_points, moving_points
+
+
+def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac: bool, ransac_thres: float = 0.05) -> np.ndarray:
+    """
+    Function to estimate an affine transform between two sets of points.
+    """
+
+    # Filter matches based on RANSAC
+    if ransac:
+        ref_points, moving_points = apply_affine_ransac(moving_points, ref_points, image, ransac_thres)
+
+    # Estimate limited affine transform with only rotation and translation
+    matrix = transform.estimate_transform(
+        "euclidean", 
+        moving_points, 
+        ref_points
+    ).params[:-1, :]
+
+    return matrix
+
+
+def apply_affine_transform(image: np.ndarray, tform: np.ndarray, mask: np.ndarray = None, contour: np.ndarray = None) -> tuple([np.ndarray, Any, Any]):
+    """
+    Apply an affine transform to an image, mask and contour.
+    """
+
+    assert len(image.shape) == 3, "image must be 3 dimensional"
+    assert tform.shape == (2, 3), "tform must be of shape (2, 3)"
+
+    # Warp the main image
+    rows, cols, _ = image.shape
+    image_warped = cv2.warpAffine(image, tform, (cols, rows), borderValue=(255, 255, 255))
+
+    # Warp mask if available 
+    if type(mask) == np.ndarray:
+        mask_warped = cv2.warpAffine(mask, tform, (cols, rows), borderValue=(0, 0, 0))
+        mask_warped = ((mask_warped > 128)*255).astype("uint8")
+    else:
+        mask_warped = None
+
+    # Warp contour if available
+    if type(contour) == np.ndarray:
+        contour_warped = np.squeeze(cv2.transform(np.expand_dims(contour, axis=0), tform))
+    else:
+        contour_warped = None
+
+    return image_warped, mask_warped, contour_warped
+
+
+def apply_affine_transform_fullres(image: pyvips.Image, tform: np.ndarray, mask: pyvips.Image = None) -> tuple([pyvips.Image, Any]):
+    """
+    Apply an affine transform to an image, mask and contour.
+    """
+
+    assert tform.shape == (2, 3), "tform must be of shape (2, 3)"
+
+    # Warp the main image
+    image_warped = image.affine(
+        (tform[0, 0], tform[0, 1], tform[1, 0], tform[1, 1]),
+        interpolate = pyvips.Interpolate.new("bicubic"),
+        odx = tform[0, 2],
+        ody = tform[1, 2],
+        oarea = (0, 0, image.width, image.height),
+        background = 255
+    )
+
+    # Warp mask if available 
+    if type(mask) == pyvips.Image:
+        mask_warped = mask.affine(
+            (tform[0, 0], tform[0, 1], tform[1, 0], tform[1, 1]),
+            interpolate = pyvips.Interpolate.new("nearest"),
+            odx = tform[0, 2],
+            ody = tform[1, 2],
+            oarea = (0, 0, mask.width, mask.height),
+            background = 0
+        )
+    else:
+        mask_warped = None
+
+    return image_warped, mask_warped
+
+
+def apply_tps_ransac(moving_points: np.ndarray, ref_points: np.ndarray, ransac_thres_tps: float, device: Any) -> tuple([np.ndarray, np.ndarray, np.ndarray]):
+    """
+    Function to apply RANSAC to filter plausible matches for TPS transform.
+    """
+
+    # Apply ransac to further filter plausible matches
+    inliers = RANSAC.nr_RANSAC(ref_points, moving_points, device, thr = ransac_thres_tps)
+
+    ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
+    moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
+
+    return ref_points, moving_points
+
+
+def estimate_tps_transform(moving_image: np.ndarray, ref_image: np.ndarray, moving_points: np.ndarray, ref_points: np.ndarray, ransac: bool, ransac_thres_tps: float, tps_level: int, keypoint_level: int, device: Any) -> pyvips.Image:
+    """
+    Function to estimate the parameters for the TPS transform.
+    """
+
+    if ransac:
+        ref_points, moving_points = apply_tps_ransac(moving_points, ref_points, ransac_thres_tps, device)
+
+    # Get image shapes
+    h1, w1 = ref_image.shape[:2]
+    h2, w2 = moving_image.shape[:2]
+    
+    # Normalize coordinates
+    c_ref = np.float32(ref_points) / np.float32([w1,h1])
+    c_moving = np.float32(moving_points) / np.float32([w2,h2])
+
+    # Downsample image to prevent OOM in TPS grid
+    downsample = 2 ** (tps_level - keypoint_level)
+    moving_image_ds = cv2.resize(moving_image, (w2//downsample, h2//downsample), interpolation=cv2.INTER_AREA)
+
+    # Compute theta from coordinates
+    moving_image_ds = torch.tensor(moving_image_ds).to(device).permute(2,0,1)[None, ...].float()
+    theta = tps_np.tps_theta_from_points(c_ref, c_moving, reduced=True, lambd=0.1)
+    theta = torch.tensor(theta).to(device)[None, ...]
+
+    # Create downsampled grid to sample from
+    grid = tps_pth.tps_grid(theta, torch.tensor(c_moving, device=device), moving_image_ds.shape)
+
+    # Upsample grid to accomodate original image
+    dx = grid.cpu().numpy()[0, :, :, 0]
+    dx = ((dx + 1) / 2) * (w2 - 1)
+
+    dy = grid.cpu().numpy()[0, :, :, 1] 
+    dy = ((dy + 1) / 2) * (h2 - 1)
+
+    # Upsample using affine rather than resize to account for shape rounding errors
+    dx = pyvips.Image.new_from_array(dx).resize(downsample)
+    dy = pyvips.Image.new_from_array(dy).resize(downsample)
+
+    # Ensure deformation field is exactly as large as the image. Discepancies can
+    # occur due to rounding errors in the shape of the image.
+    if (dx.width != w2) or (dx.height != h2):
+        dx = dx.gravity("centre", w2, h2)
+        dy = dy.gravity("centre", w2, h2)
+
+    index_map = dx.bandjoin([dy])
+
+    return index_map
+
+
+def apply_tps_transform(moving_image: np.ndarray, moving_mask: np.ndarray, index_map: pyvips.Image) -> tuple([np.ndarray, np.ndarray, np.ndarray]):
+    """
+    Function to apply the TPS transform. We still use
+    pyvips for the actual transform as torch can at most handle ~1000x1000 
+    transforms and we need these larger images for downstream tasks.
+    """
+
+    # Apply transform
+    moving_image = pyvips.Image.new_from_array(moving_image)
+    moving_image_warped = moving_image.mapim(
+        index_map, 
+        interpolate=pyvips.Interpolate.new('bicubic'), 
+        background=[255, 255, 255]
+    ).numpy().astype(np.uint8)
+
+    moving_mask = pyvips.Image.new_from_array(moving_mask)
+    moving_mask_warped = moving_mask.mapim(
+        index_map,
+        interpolate=pyvips.Interpolate.new('nearest'),
+        background=[0, 0, 0]
+    ).numpy().astype(np.uint8)
+
+    # Compute new contour of mask
+    moving_contour, _ = cv2.findContours(moving_mask_warped, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    moving_contour = np.squeeze(max(moving_contour, key=cv2.contourArea))
+
+    # Multiply image by mask to get rid of black borders
+    moving_image_warped[moving_mask_warped < np.max(moving_mask_warped)] = 255
+
+    return moving_image_warped, moving_mask_warped, moving_contour
+
