@@ -10,7 +10,8 @@ from skimage.measure import marching_cubes
 import plotly.graph_objects as go
 
 from evaluation import compute_dice
-
+from transforms import *
+from utils import *
 
 def plot_initial_reconstruction(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     """
@@ -51,6 +52,7 @@ def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], centerpoints:
 
     return
 
+
 def plot_prealignment(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     """
     Function to plot the images after rotation and translation adjustment.
@@ -67,11 +69,35 @@ def plot_prealignment(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     return
 
 
-def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, matches: List, ransac_matches: List, savepath: pathlib.Path) -> None:
+def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, tform: str, savepath: pathlib.Path) -> None:
     """
     Function to plot the keypoint pairs on two images.
     """
 
+    # Compute ransac matches to visualize the effect of RANSAC
+    if tform == "affine":
+        ref_points_ransac, moving_points_ransac = apply_affine_ransac(
+            moving_points = moving_points,
+            ref_points = ref_points,
+            image = moving_image
+        )
+    elif tform == "tps":
+        ref_points_ransac, moving_points_ransac = apply_tps_ransac(
+            moving_points = moving_points,
+            ref_points = ref_points,
+            device = "cpu"
+        )
+
+    # Define matches and keypoints according to opencv standards
+    matches = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i in range(len(ref_points))]
+    ransac_matches = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i in range(len(ref_points_ransac))]
+    
+    ref_points = [cv2.KeyPoint(x=pt[0], y=pt[1], size=1) for pt in ref_points]
+    moving_points = [cv2.KeyPoint(x=pt[0], y=pt[1], size=1) for pt in moving_points]
+    ref_points_ransac = [cv2.KeyPoint(x=pt[0], y=pt[1], size=1) for pt in ref_points_ransac]
+    moving_points_ransac = [cv2.KeyPoint(x=pt[0], y=pt[1], size=1) for pt in moving_points_ransac]
+
+    # Draw matches on canvas
     result = cv2.drawMatches(
         ref_image, 
         ref_points, 
@@ -86,9 +112,9 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
 
     result_ransac = cv2.drawMatches(
         ref_image,
-        ref_points,
+        ref_points_ransac,
         moving_image,
-        moving_points,
+        moving_points_ransac,
         ransac_matches,
         None,
         matchColor=(0,255,0),
@@ -96,7 +122,7 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
         flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
     )
 
-    plt.figure(figsize = (8, 8))
+    plt.figure(figsize = (6, 6))
     plt.subplot(121)
     plt.imshow(result)
     plt.title(f"original matches: (n={len(matches)})")
@@ -150,6 +176,39 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
 
     return
 
+
+def plot_warped_tps_images(ref_image: np.ndarray, moving_image: np.ndarray, moving_image_warped: np.ndarray, grid: Any, savepath: pathlib.Path) -> None:
+    """
+    Function to show the TPS-warped image and the corresponding grid.
+    """
+
+    # Apply TPS to grid for visualization purposes
+    image_shape = moving_image.shape[:2]
+    warped_grid = grid_to_image(image_size=image_shape, grid=grid)
+
+    plt.figure()
+    plt.subplot(141)
+    plt.imshow(ref_image)
+    plt.axis("off")
+    plt.title("ref")
+    plt.subplot(142)
+    plt.imshow(moving_image)
+    plt.axis("off")
+    plt.title("mov")
+    plt.subplot(143)
+    plt.imshow(warped_grid)
+    plt.axis("off")
+    plt.title("tps grid")
+    plt.subplot(144)
+    plt.imshow(moving_image_warped)
+    plt.axis("off")
+    plt.title("warped")
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return
+
+
 def plot_final_reconstruction(final_images: List, save_dir: pathlib.Path, tform: str) -> None:
     """
     Plot final reconstruction using the affine transformation computed from the detected keypoints.
@@ -194,58 +253,6 @@ def plot_interpolated_contour(slice_a: np.ndarray, contour_a: List[int], slice_b
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    return
-
-def plot_tps_grid(points_moving: np.ndarray, points_ref: np.ndarray, tps: Any, save_path: pathlib.Path):
-    """
-    Function to visualize the deformation field
-    obtained with the TPS.
-    """
-
-    # Create initial grid
-    grid_size = 50
-    min_x, min_y = np.min(points_ref, axis=0)
-    max_x, max_y = np.max(points_ref, axis=0)
-
-    x = np.linspace(min_x, max_x, grid_size)
-    y = np.linspace(min_y, max_y, grid_size)
-    X, Y = np.meshgrid(x, y)
-    grid_points = np.vstack((X.flatten(), Y.flatten())).T
-
-    # Get warped grid points
-    _, warped_grid_points = tps.applyTransformation(grid_points.reshape(1, -1, 2))
-    X_warped_grid = np.squeeze(warped_grid_points)[:, 0]
-    Y_warped_grid = np.squeeze(warped_grid_points)[:, 1]
-
-    _, warped_moving_points = tps.applyTransformation(points_moving.reshape(1, -1, 2))
-    X_warped_moving = np.squeeze(warped_moving_points)[:, 0]
-    Y_warped_moving = np.squeeze(warped_moving_points)[:, 1]
-
-    # Source grid
-    plt.subplot(1, 2, 1)
-    plt.title("Source Grid")
-    plt.scatter(X, Y, marker='.', color='black')
-    plt.scatter(points_ref[:, 0], points_ref[:, 1], marker='o', color='blue')
-    plt.scatter(points_moving[:, 0], points_moving[:, 1], marker='o', color='red') 
-    # plt.xlim(min_x, max_x)
-    # plt.ylim(min_y, max_y)
-    plt.gca().invert_yaxis()  
-
-    # Warped grid
-    plt.subplot(1, 2, 2)
-    plt.title("Warped Grid")
-    plt.scatter(X, Y, marker='.', color='black')
-    # plt.scatter(X_warped_grid, Y_warped_grid, marker='.', color='black')
-    plt.scatter(points_ref[:, 0], points_ref[:, 1], marker='o', color='blue') 
-    plt.scatter(X_warped_moving+1, Y_warped_moving+1, marker='o', color='red') 
-    # plt.xlim(min_x, max_x)
-    # plt.ylim(min_y, max_y)
-    plt.gca().invert_yaxis()  
-
-    plt.tight_layout()
-    plt.savefig(save_path)
     plt.close()
 
     return

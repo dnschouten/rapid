@@ -425,6 +425,14 @@ class Hiprova:
                     ref_image = ref_image, 
                     moving_image = moving_image
                 )
+                plot_keypoint_pairs(
+                    ref_image = ref_image,
+                    moving_image = moving_image,
+                    ref_points = ref_points,
+                    moving_points = moving_points,
+                    tform = "affine",
+                    savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_affine_{mov}_to_{ref}_rot_{rot}.png")
+                )
 
                 # Apply transforms
                 affine_matrix = estimate_affine_transform(
@@ -438,6 +446,16 @@ class Hiprova:
                     image = moving_image,
                     tform = affine_matrix.params[:-1, :],
                     mask = moving_mask,
+                )
+
+                # Plot resulting warp
+                plot_warped_images(
+                    ref_image = ref_image,
+                    ref_mask = final_masks[ref],
+                    moving_image = moving_image,
+                    moving_image_warped = moving_image_warped,
+                    moving_mask_warped = moving_mask_warped,
+                    savepath = self.local_save_dir.joinpath("warps", f"warps_affine_{mov}_to_{ref}_rot_{rot}.png")
                 )
 
                 if len(ref_points) > best_num_matches:
@@ -470,7 +488,7 @@ class Hiprova:
 
         return final_images, final_masks, final_images_fullres, final_masks_fullres
 
-    def tps_reconstruction(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
+    def tps_reconstruction(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.Image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
         """
         Method to perform a deformable reconstruction between adjacent slides. This
         step consists of:
@@ -512,6 +530,14 @@ class Hiprova:
                 ref_image = ref_image, 
                 moving_image = moving_image
             )
+            plot_keypoint_pairs(
+                ref_image = ref_image,
+                moving_image = moving_image,
+                ref_points = ref_points,
+                moving_points = moving_points,
+                tform = "tps",
+                savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_tps_{mov}_to_{ref}.png")
+            )
 
             # Apply transforms
             index_map, grid = estimate_tps_transform(
@@ -530,6 +556,13 @@ class Hiprova:
                 moving_mask = moving_mask,
                 index_map = index_map    
             )
+            plot_warped_tps_images(
+                ref_image = ref_image,
+                moving_image = moving_image,
+                moving_image_warped = moving_image_warped,
+                grid = grid,
+                savepath = self.debug_dir.joinpath(f"warps_tps_{mov}_to_{ref}.png")
+            )
 
             # Save final image
             final_images[mov] = moving_image_warped.astype("uint8")
@@ -545,22 +578,6 @@ class Hiprova:
                 )
                 final_images_fullres[mov] = moving_image_fullres_warped
                 final_masks_fullres[mov] = moving_mask_fullres_warped
-
-        plt.figure()
-        for c, im in enumerate(final_images):
-            plt.subplot(1, len(final_images), c+1)
-            plt.imshow(im)
-            plt.axis("off")
-        plt.savefig(self.debug_dir.joinpath("tps_overview_numpy.png"))
-        plt.close()
-
-        plt.figure()
-        for c, im in enumerate(final_images_fullres):
-            plt.subplot(1, len(final_images_fullres), c+1)
-            plt.imshow(im.numpy())
-            plt.axis("off")
-        plt.savefig(self.debug_dir.joinpath("tps_overview_pyvips.png"))
-        plt.close()
 
         return final_images, final_masks, final_images_fullres, final_masks_fullres
 

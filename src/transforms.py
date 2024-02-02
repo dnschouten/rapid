@@ -13,7 +13,7 @@ from modules.tps import pytorch as tps_pth
 from modules.tps import numpy as tps_np
 
 
-def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac_thres: float = 0.05) -> tuple([np.ndarray, np.ndarray, List]):
+def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac_thres: float = 0.05) -> tuple([np.ndarray, np.ndarray]):
     """
     Function to apply RANSAC to filter plausible matches for affine transform.
     """
@@ -32,7 +32,7 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
     ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
     moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
 
-    return ref_points, moving_points, inliers
+    return ref_points, moving_points
 
 
 def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac: bool, ransac_thres: float = 0.05) -> tuple([np.ndarray, List]):
@@ -112,7 +112,7 @@ def apply_affine_transform_fullres(image: pyvips.Image, mask: pyvips.Image, rota
     return image_warped, mask_warped
 
 
-def apply_tps_ransac(moving_points: np.ndarray, ref_points: np.ndarray, ransac_thres_tps: float, device: Any) -> tuple([np.ndarray, np.ndarray, np.ndarray]):
+def apply_tps_ransac(moving_points: np.ndarray, ref_points: np.ndarray, device: Any, ransac_thres_tps: float = 0.05) -> tuple([np.ndarray, np.ndarray, np.ndarray]):
     """
     Function to apply RANSAC to filter plausible matches for TPS transform.
     """
@@ -239,29 +239,5 @@ def apply_tps_transform_fullres(image: pyvips.Image, mask: pyvips.Image, grid: A
         interpolate=pyvips.Interpolate.new('nearest'),
         background=[0, 0, 0]
     )
-
-    # Apply TPS to grid for visualization purposes
-    # image_shape = tuple([image.height, image.width])
-    # warped_grid = grid_to_image(image_size=image_shape, grid=grid)
-
-    # plt.figure()
-    # plt.subplot(141)
-    # plt.imshow(self.moving_image)
-    # plt.axis("off")
-    # plt.title("original")
-    # plt.subplot(142)
-    # plt.imshow(warped_grid)
-    # plt.axis("off")
-    # plt.title("tps grid")
-    # plt.subplot(143)
-    # plt.imshow(self.moving_image_warped)
-    # plt.axis("off")
-    # plt.title("tps numpy")
-    # plt.subplot(144)
-    # plt.imshow(self.moving_image_fullres_warped.numpy())
-    # plt.axis("off")
-    # plt.title("tps fullres")
-    # plt.savefig(self.debug_dir.joinpath(f"tps_numpy_vs_fullres_{self.mov}.png"))
-    # plt.close()
 
     return image_warped, mask_warped
