@@ -10,7 +10,7 @@ from modules.models.DALF import DALF_extractor as DALF
 
 def get_keypoints(detector: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    
+    Wrapped function to get either LightGlue or DALF keypoints
     """
 
     assert detector.lower() in ["lightglue", "dalf"]

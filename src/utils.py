@@ -167,7 +167,7 @@ def simplify_contour(contour: np.ndarray) -> np.ndarray:
     return contour
 
 
-def visualize_grid(image_size: Tuple, grid: torch.Tensor) -> np.ndarray:
+def grid_to_image(image_size: Tuple, grid: torch.Tensor) -> np.ndarray:
     """
     Draw a grid on a blank image.
     """

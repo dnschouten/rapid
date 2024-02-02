@@ -6,6 +6,8 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List, Any, Tuple
+from skimage.measure import marching_cubes
+import plotly.graph_objects as go
 
 from evaluation import compute_dice
 
@@ -49,72 +51,21 @@ def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], centerpoints:
 
     return
 
-def plot_prealignment(images: List[np.ndarray], contours: List[np.ndarray], save_dir: pathlib.Path) -> None:
+def plot_prealignment(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     """
     Function to plot the images after rotation and translation adjustment.
     """
 
     plt.figure(figsize=(10, 5))
-    for i, (image, contour) in enumerate(zip(images, contours), 1):
-        plt.subplot(1, len(images), i)
+    for c, image in enumerate(images, 1):
+        plt.subplot(1, len(images), c)
         plt.imshow(image)
-        plt.scatter(contour[:, 0], contour[:, 1], c="r", s=2)
         plt.axis("off")
     plt.savefig(save_dir.joinpath("02_prealignment.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
     return
 
-
-def plot_keypoint_pairs_lightglue(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: torch.Tensor, moving_points: torch.Tensor, savepath: pathlib.Path) -> None:
-    """
-    Function to plot the lightglue keypoint pairs on two images.
-    """
-
-    # Transform keypoints to cpu
-    ref_points = ref_points.cpu().numpy()
-    moving_points = moving_points.cpu().numpy()
-    
-    images = [ref_image, moving_image]
-    keypoints = [ref_points, moving_points] 
-
-    # Plot images and keypoints
-    fig, ax = plt.subplots(1, 2, figsize=(6, 3))
-    for c, (im, kp) in enumerate(zip(images, keypoints)):
-        ax[c].imshow(im)
-        ax[c].set_axis_off()
-        for spine in ax[c].spines.values(): 
-            spine.set_visible(False)
-        ax[c].scatter(kp[:, 0], kp[:, 1], c="lime", s=4, linewidths=0)
-    
-    # Plot matches between keypoint pairs
-    ax0, ax1 = fig.axes
-    for i in range(len(ref_points)):
-        line = patches.ConnectionPatch(
-            xyA=(ref_points[i, 0], ref_points[i, 1]),
-            xyB=(moving_points[i, 0], moving_points[i, 1]),
-            coordsA=ax0.transData,
-            coordsB=ax1.transData,
-            axesA=ax0,
-            axesB=ax1,
-            zorder=1,
-            color="lime",
-            linewidth=0.5,
-            clip_on=True,
-            picker=5.0,
-        )
-        line.set_annotation_clip(True)
-        fig.add_artist(line)
-    
-    # Freeze axes
-    ax0.autoscale(enable=False)
-    ax1.autoscale(enable=False)
-
-    fig.tight_layout()
-    plt.savefig(savepath, dpi=300, bbox_inches="tight")
-    plt.close()
-
-    return
 
 def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, matches: List, ransac_matches: List, savepath: pathlib.Path) -> None:
     """
@@ -299,3 +250,38 @@ def plot_tps_grid(points_moving: np.ndarray, points_ref: np.ndarray, tps: Any, s
 
     return
 
+
+def plot_3d_volume(volume: np.ndarray, save_dir: pathlib.Path) -> None:
+    """
+    Method to plot all the levels of the 3D reconstructed volume in a single 3D plot.
+    """
+
+    # Extract surface mesh from 3D volume
+    verts, faces, _, _ = marching_cubes(volume)
+
+    # Plot using plotly
+    fig = go.Figure(data=[
+        go.Mesh3d(
+            x=verts[:, 0],
+            y=verts[:, 1],
+            z=verts[:, 2],
+            i=faces[:, 0],
+            j=faces[:, 1],
+            k=faces[:, 2],
+            opacity=0.5,
+            color='pink'
+        )
+    ])
+
+    fig.update_layout(scene=dict(
+        xaxis_title='X Axis',
+        yaxis_title='Y Axis',
+        zaxis_title='Z Axis',
+        aspectmode="data"),
+        margin=dict(t=0, b=0, l=0, r=0)
+    )
+
+    fig.write_image(save_dir.joinpath("3d_reconstruction.png"), engine="kaleido")
+    fig.show()
+
+    return

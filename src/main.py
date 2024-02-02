@@ -56,7 +56,7 @@ def main():
         constructor = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
-            tform_tps = False,
+            tform_tps = True,
         )
         constructor.run()
 

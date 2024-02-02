@@ -10,12 +10,12 @@ class Config:
         # > keypoint level: level at which the keypoints are detected and affine transform is computed
         # > tform level: level at which the tps transform is computed
         # > evaluation level: level at which the reconstruction evaluation is performed
-        self.keypoint_level = 8
+        self.keypoint_level = 7
         self.tps_level = 8
         self.evaluation_level = 9
 
         # Whether the affine/tps transform is computed using RANSAC.
-        self.affine_ransac = True
+        self.affine_ransac = False
         self.tps_ransac = False
 
         # Difference in number of levels between the original images and the generated tissue masks
@@ -23,7 +23,7 @@ class Config:
 
         # The level at which the full resolution images are reconstructed. For full 
         # resolution choose 0, for skipping this component choose -1. 
-        self.full_resolution_level = 8
+        self.full_resolution_level = 7
 
         # Minimum number of images required for a meaningful reconstruction
         self.min_images_for_reconstruction = 3
