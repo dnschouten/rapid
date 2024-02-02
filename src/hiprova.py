@@ -18,6 +18,7 @@ from utils import *
 from config import Config
 from transforms import *
 from keypoints import *
+from evaluation import *
 
 
 class Hiprova:
@@ -53,6 +54,7 @@ class Hiprova:
         # Create directories
         self.local_save_dir.joinpath("keypoints").mkdir(parents=True, exist_ok=True)
         self.local_save_dir.joinpath("warps").mkdir(parents=True, exist_ok=True)
+        self.local_save_dir.joinpath("evaluation").mkdir(parents=True, exist_ok=True)
 
         # Set level at which to load the image
         self.keypoint_level = self.config.keypoint_level
@@ -369,9 +371,9 @@ class Hiprova:
 
         return final_images, final_masks, final_images_fullres, final_masks_fullres
 
-    def affine_reconstruction(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.Image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
+    def affine_registration(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.Image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
         """
-        Method to perform the affine reconstruction between adjacent slides. This
+        Method to perform the affine registration between adjacent slides. This
         step consists of:
             1) Computing keypoints and matches between a pair of images.
             2) Finding the optimal orientation of the moving image.
@@ -488,9 +490,9 @@ class Hiprova:
 
         return final_images, final_masks, final_images_fullres, final_masks_fullres
 
-    def tps_reconstruction(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.Image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
+    def tps_registration(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.Image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
         """
-        Method to perform a deformable reconstruction between adjacent slides. This
+        Method to perform a deformable registration between adjacent slides. This
         step consists of:
             1) Computing keypoints and matches between a pair of images.
             2) Using the keypoint to find a thin plate splines transform.
@@ -561,7 +563,7 @@ class Hiprova:
                 moving_image = moving_image,
                 moving_image_warped = moving_image_warped,
                 grid = grid,
-                savepath = self.debug_dir.joinpath(f"warps_tps_{mov}_to_{ref}.png")
+                savepath = self.local_save_dir.joinpath("warps", f"warps_tps_{mov}_to_{ref}.png")
             )
 
             # Save final image
@@ -582,9 +584,9 @@ class Hiprova:
         return final_images, final_masks, final_images_fullres, final_masks_fullres
 
 
-    def perform_reconstruction(self) -> None:
+    def registration(self) -> None:
         """
-        Method to perform all steps of the reconstruction process.
+        Method to perform all steps of the registration process.
         """
 
         # Pre-alignment as initial step
@@ -596,7 +598,7 @@ class Hiprova:
         )
 
         # Affine registration to improve prealignment
-        images, masks, fullres_images, fullres_masks = self.affine_reconstruction(
+        images, masks, fullres_images, fullres_masks = self.affine_registration(
             images = images,
             masks = masks,
             images_fullres = fullres_images,
@@ -610,7 +612,7 @@ class Hiprova:
 
         # Deformable registration as final step
         if self.tform_tps:
-            images, masks, fullres_images, fullres_masks = self.tps_reconstruction(
+            images, masks, fullres_images, fullres_masks = self.tps_registration(
                 images = images,
                 masks = masks,
                 images_fullres = fullres_images,
@@ -622,9 +624,15 @@ class Hiprova:
                 tform = "tps"
             )
 
+        # Save to use for 3D reconstruction
+        self.final_images = images
+        self.final_masks = masks
+        self.final_images_fullres = fullres_images
+        self.final_masks_fullres = fullres_masks
+
         return
 
-    def create_3d_volume(self) -> None:
+    def reconstruct_3d_volume(self) -> None:
         """
         Method to create a 3D representation of the stacked slices. We leverage sectioning
         variables such as slice thickness, slice distance and x-y-z downsampling levels
@@ -637,14 +645,20 @@ class Hiprova:
         slice_thickness = self.config.slice_thickness
         slice_distance = self.config.slice_distance
 
-        # Downsample images again in order to create 3D volume
+        # Downsample images for computational efficiency in shape analysis 
         partial_xy_downsample = 2 ** (self.evaluation_level - self.keypoint_level)
         total_xy_downsample = 2 ** self.evaluation_level
         new_size = tuple(int(i / partial_xy_downsample) for i in self.final_images[0].shape[:2][::-1])
         
         self.final_images = [cv2.resize(i, new_size, interpolation=cv2.INTER_AREA) for i in self.final_images]
         self.final_masks = [cv2.resize(i, new_size, interpolation=cv2.INTER_NEAREST) for i in self.final_masks]
-        self.final_contours = [(c / partial_xy_downsample).astype(np.int32) for c in self.final_contours]
+        
+        # Fetch fresh contours
+        self.final_contours = []
+        for mask in self.final_masks:
+            contour, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+            contour = np.squeeze(max(contour, key=cv2.contourArea))
+            self.final_contours.append(contour)
 
         # Block size is the number of empty slices we have to insert between
         # actual slices for a true to size 3D model.
@@ -660,10 +674,8 @@ class Hiprova:
              dtype="uint8"
         )
         self.final_reconstruction_3d_mask = np.zeros(
-            (self.final_masks[0].shape[0],  
-             self.final_masks[0].shape[1],  
-             self.block_size*(len(self.final_masks)+1)),                  
-             dtype="uint8"
+            self.final_reconstruction_3d.shape[:-1]  ,             
+            dtype="uint8"
         )
 
         # Populate actual slices
@@ -673,6 +685,9 @@ class Hiprova:
             
         self.final_reconstruction_3d[self.final_reconstruction_3d == 255] = 0
 
+        # Interpolate the volume
+        self.interpolate_3d_volume()
+
         return
     
     def interpolate_3d_volume(self) -> None:
@@ -680,7 +695,7 @@ class Hiprova:
         Method to interpolate the 2D slices to a binary 3D volume.
         """
 
-        self.final_reconstruction_volume = copy.copy(self.final_reconstruction_3d_mask)
+        # self.final_reconstruction_volume = copy.copy(self.final_reconstruction_3d_mask)
         self.filled_slices = [self.block_size*(i+1) for i in range(len(self.final_images))]
 
         # Loop over slices for interpolation
@@ -710,10 +725,10 @@ class Hiprova:
                 mask = np.zeros_like(slice_a)
                 cv2.drawContours(mask, [contour.astype("int")], -1, (255),thickness=cv2.FILLED)
 
-                savepath = self.local_save_dir.joinpath(f"contour_{self.filled_slices[i]+j+1}.png")
+                # savepath = self.debug_dir.joinpath(f"contour_{self.filled_slices[i]+j+1}.png")
                 # plot_interpolated_contour(slice_a, contour_a, mask, contour, slice_b, contour_b, savepath)
 
-                self.final_reconstruction_volume[:, :, self.filled_slices[i]+j+1] = mask
+                self.final_reconstruction_3d_mask[:, :, self.filled_slices[i]+j+1] = mask
 
         return
 
@@ -724,7 +739,12 @@ class Hiprova:
 
         print(" - evaluating reconstruction")
 
-        tre = compute_tre_keypoints()
+        # Compute average registration error between keypoints of adjacent images
+        tre = compute_tre_keypoints(
+            images = self.final_images,
+            level = self.keypoint_level,
+            savedir = self.local_save_dir
+        )
 
         # Compute sphericity of the reconstructed volume
         # self.sphericity = compute_sphericity(self.final_reconstruction_volume)
@@ -755,11 +775,10 @@ class Hiprova:
         self.load_images()
         self.load_masks()
         self.apply_masks()
-        self.perform_reconstruction()
-        # self.create_3d_volume()
-        # self.interpolate_3d_volume()
+        self.registration()
+        # self.reconstruct_3d_volume()
         # self.plot_3d_volume()
-        # self.evaluate_reconstruction()
+        self.evaluate_reconstruction()
         self.save_results()
 
         return

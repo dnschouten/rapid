@@ -1,14 +1,12 @@
 import numpy as np
 import SimpleITK as sitk
+import pathlib
+import matplotlib.pyplot as plt
 from radiomics import shape
-from typing import Tuple, List
+from typing import List
 from scipy.ndimage import zoom
-import torch
-import cv2
 
-from lightglue import LightGlue, SuperPoint, viz2d
-from lightglue.utils import rbd
-from modules.models.DALF import DALF_extractor as DALF
+from keypoints import get_keypoints
 
 
 def compute_sphericity(mask: np.ndarray) -> float:
@@ -73,12 +71,44 @@ def compute_reconstruction_dice(masks: List) -> float:
     return np.mean(dice_scores)
 
 
-def compute_tre_keypoints():
+def compute_tre_keypoints(images: List, level: int, savedir: pathlib.Path) -> float:
     """
     Function to compute the target registration error between two sets of keypoints
     """
 
+    from visualization import plot_tre_per_pair
 
+    tre_per_pair = []
+
+    # Detect keypoints, match and compute TRE
+    for c in range(len(images)-1):
+
+        # Get keypoints
+        ref_points, moving_points = get_keypoints(
+            detector = "lightglue", 
+            ref_image = images[c], 
+            moving_image = images[c+1]
+        )
+
+        # Compute average TRE
+        tre = np.mean(np.linalg.norm(ref_points - moving_points, axis=-1))
+
+        # Scale w.r.t. pixel spacing
+        level_zero_spacing = 0.25
+        level_spacing = level_zero_spacing * 2**level
+        scaled_tre = tre * level_spacing
+
+        tre_per_pair.append(scaled_tre)
+
+        savepath = savedir.joinpath("evaluation", f"tre_{c}_{c+1}.png")
+        plot_tre_per_pair(
+            ref_image = images[c], 
+            moving_image = images[c+1], 
+            ref_points = ref_points, 
+            moving_points = moving_points, 
+            tre = scaled_tre,
+            savepath = savepath
+        )
 
     return
 

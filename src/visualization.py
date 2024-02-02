@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 import pathlib
 import cv2
@@ -12,6 +11,7 @@ import plotly.graph_objects as go
 from evaluation import compute_dice
 from transforms import *
 from utils import *
+
 
 def plot_initial_reconstruction(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     """
@@ -253,6 +253,34 @@ def plot_interpolated_contour(slice_a: np.ndarray, contour_a: List[int], slice_b
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return
+
+
+def plot_tre_per_pair(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: np.ndarray, moving_points: np.ndarray, tre: float, savepath: pathlib.Path) -> None:
+    """
+    Function to visualize the TRE per pair of images.
+    """
+
+    plt.figure()
+    plt.suptitle(f"TRE: {tre:.2f} microns")
+    plt.subplot(131)
+    plt.imshow(ref_image)
+    plt.title("im1")
+    plt.axis("off")
+    plt.subplot(132)
+    plt.imshow(moving_image)
+    plt.title("im2")
+    plt.axis("off")
+    plt.subplot(133)
+    plt.imshow(np.zeros_like(ref_image))
+    plt.scatter(ref_points[:, 0], ref_points[:, 1], c="r", s=5)
+    plt.scatter(moving_points[:, 0], moving_points[:, 1], c="b", s=5)
+    for i in range(len(ref_points)):
+        plt.plot([ref_points[i, 0], moving_points[i, 0]], [ref_points[i, 1], moving_points[i, 1]], c="w", lw=1)
+    plt.legend(["ref", "moving"])
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
     plt.close()
 
     return

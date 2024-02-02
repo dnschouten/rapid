@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import SimpleITK as sitk
 import cv2
 from typing import List, Any
 from lightglue import LightGlue, SuperPoint
