@@ -29,8 +29,11 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
     )
 
     # Filter matches based on RANSAC
-    ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
-    moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
+    if np.sum(inliers) > 5:
+        ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
+        moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
+    else:
+        print("RANSAC failed to find >5 inliers, returning all matches.")
 
     return ref_points, moving_points
 
