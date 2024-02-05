@@ -71,7 +71,7 @@ def compute_reconstruction_dice(masks: List) -> float:
     return np.mean(dice_scores)
 
 
-def compute_tre_keypoints(images: List, level: int, savedir: pathlib.Path) -> float:
+def compute_tre_keypoints(images: List, level: int, savedir: pathlib.Path, spacing: float) -> float:
     """
     Function to compute the target registration error between two sets of keypoints
     """
@@ -94,8 +94,7 @@ def compute_tre_keypoints(images: List, level: int, savedir: pathlib.Path) -> fl
         tre = np.mean(np.linalg.norm(ref_points - moving_points, axis=-1))
 
         # Scale w.r.t. pixel spacing
-        level_zero_spacing = 0.25
-        level_spacing = level_zero_spacing * 2**level
+        level_spacing = spacing * 2**level
         scaled_tre = tre * level_spacing
 
         tre_per_pair.append(scaled_tre)
@@ -110,6 +109,6 @@ def compute_tre_keypoints(images: List, level: int, savedir: pathlib.Path) -> fl
             savepath = savepath
         )
 
-    return
+    return np.mean(tre_per_pair)
 
 

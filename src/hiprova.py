@@ -119,6 +119,7 @@ class Hiprova:
         """
 
         self.raw_fullres_images = [] 
+        all_spacings = []
 
         for im_path in self.image_paths:
                 
@@ -134,8 +135,16 @@ class Hiprova:
             if image_fullres.bands == 4:
                 image_fullres = image_fullres.flatten().cast("uchar")
 
+            # Get pixel spacing
+            pixel_spacing = 1 / (image_fullres.get("xres") / 1000)
+            all_spacings.append(pixel_spacing)
+
             # Save images
             self.raw_fullres_images.append(image_fullres)
+
+        # Check if pixel spacing is consistent
+        assert np.std(all_spacings) < 0.01, "Pixel spacing is not consistent between images."
+        self.pixel_spacing_image = all_spacings[0]
 
         return
 
@@ -147,7 +156,7 @@ class Hiprova:
         """
 
         self.raw_masks = []
-        
+
         for c, mask_path in enumerate(self.mask_paths):
 
             # Load mask and convert to numpy array
@@ -174,6 +183,7 @@ class Hiprova:
         """
 
         self.raw_fullres_masks = [] 
+        all_spacings = []
 
         for c, mask_path in enumerate(self.mask_paths):
                 
@@ -187,6 +197,13 @@ class Hiprova:
             # Save numpy mask
             mask_fullres = ((mask_fullres > 0)*255).cast("uchar")
             self.raw_fullres_masks.append(mask_fullres)
+
+            # Get pixel spacing
+            pixel_spacing = 1 / (mask_fullres.get("xres") / 1000)
+            all_spacings.append(pixel_spacing)
+
+        # Check if pixel spacing is consistent
+        assert np.std(all_spacings) < 0.01, "Pixel spacing is not consistent between masks."
 
         return
 
@@ -696,7 +713,6 @@ class Hiprova:
         Method to interpolate the 2D slices to a binary 3D volume.
         """
 
-        # self.final_reconstruction_volume = copy.copy(self.final_reconstruction_3d_mask)
         self.filled_slices = [self.block_size*(i+1) for i in range(len(self.final_images))]
 
         # Loop over slices for interpolation
@@ -731,6 +747,12 @@ class Hiprova:
 
                 self.final_reconstruction_3d_mask[:, :, self.filled_slices[i]+j+1] = mask
 
+        # Plot snapshot of result
+        plot_3d_volume(
+            volume = self.final_reconstruction_3d_mask, 
+            savepath = self.local_save_dir.joinpath("reconstruction_3d.png")
+        )
+
         return
 
     def evaluate_reconstruction(self):
@@ -741,17 +763,18 @@ class Hiprova:
         print(" - evaluating reconstruction")
 
         # Compute average registration error between keypoints of adjacent images
-        tre = compute_tre_keypoints(
+        self.tre = compute_tre_keypoints(
             images = self.final_images,
             level = self.keypoint_level,
-            savedir = self.local_save_dir
+            savedir = self.local_save_dir,
+            spacing = self.pixel_spacing_image
         )
 
         # Compute sphericity of the reconstructed volume
-        # self.sphericity = compute_sphericity(self.final_reconstruction_volume)
+        self.sphericity = compute_sphericity(self.final_reconstruction_3d_mask)
 
         # Compute dice score of all adjacent masks
-        # reconstruction_dice = compute_reconstruction_dice(masks = self.final_masks)
+        self.reconstruction_dice = compute_reconstruction_dice(masks = self.final_masks)
 
         return
 
@@ -777,8 +800,7 @@ class Hiprova:
         self.load_masks()
         self.apply_masks()
         self.registration()
-        # self.reconstruct_3d_volume()
-        # self.plot_3d_volume()
+        self.reconstruct_3d_volume()
         self.evaluate_reconstruction()
         self.save_results()
 
