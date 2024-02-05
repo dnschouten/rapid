@@ -6,7 +6,7 @@
     "configurations": [
         {
             "name": "Python: Current File",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
@@ -14,6 +14,7 @@
             "args": [
                 "--datadir", "/data/pathology/archives/prostate/icarus/3d_reconstruction/hiprova/train",
                 "--savedir", "/data/pathology/projects/icarus/3d_reconstruction/results/hiprova/main/lightglue",
+                "--mode", "affine"
             ]
         }
     ]
