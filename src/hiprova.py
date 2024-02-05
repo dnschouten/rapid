@@ -785,6 +785,25 @@ class Hiprova:
 
         print(f" - saving results")
 
+        # Save warped images for later inspection
+        self.local_save_dir.joinpath("warped_images").mkdir(parents=True, exist_ok=True)
+        for name, im, mask in zip(self.image_ids, self.final_images_fullres, self.final_masks_fullres):
+            im.write_to_file(
+                str(self.local_save_dir.joinpath("warped_images", f"{name}.tif")),
+                tile=True,
+                compression="jpeg",
+                bigtiff=True,
+                pyramid=True,
+                Q=80
+            )
+            mask.write_to_file(
+                str(self.local_save_dir.joinpath("warped_images", f"{name}_mask.tif")),
+                tile=True,
+                compression="lzw",
+                bigtiff=True,
+                pyramid=True,
+            )
+
         # Upload local results to external storage 
         subprocess.call(f"cp -r {self.local_save_dir} {self.save_dir.parent}", shell=True)
         shutil.rmtree(self.local_save_dir)
