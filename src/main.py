@@ -1,6 +1,5 @@
-import matplotlib.pyplot as plt
 import argparse
-import multiresolutionimageinterface as mir
+import pandas as pd
 from pathlib import Path
 
 from hiprova import Hiprova
@@ -57,7 +56,14 @@ def main():
     # Get patients
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
 
-    # Run 3D reconstruction
+    print(f"\nRunning job with following parameters:" \
+          f"\n - data directory: {data_dir}" \
+          f"\n - save directory: {save_dir}" \
+          f"\n - mode: {mode}" \
+          f"\n - num patients: {len(patients)}"
+    )
+    df = pd.DataFrame()
+
     for pt in patients[1:]:
 
         print(f"\nProcessing patient {pt.name}")
@@ -68,6 +74,19 @@ def main():
             mode = mode,
         )
         constructor.run()
+
+        # Save results in dataframe
+        new_df = pd.DataFrame({
+            "case": [pt.name],
+            "dice": [constructor.reconstruction_dice],
+            "tre": [constructor.tre],
+            "sphericity": [constructor.sphericity],
+            "mode": [mode],
+        })
+        df = pd.concat([df, new_df], ignore_index=True)
+
+    # Save dataframe
+    df.to_excel(save_dir.joinpath("aggregate_metrics.xlsx"), index=False)
 
     return
 
