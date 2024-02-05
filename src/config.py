@@ -8,13 +8,13 @@ class Config:
         # The level at which the images are processed for the different parts of the reconstruction. Lower
         # levels and thus higher resolution are more accurate but also cause memory problems.
         # > keypoint level: level at which the keypoints are detected and affine transform is computed
-        # > tform level: level at which the tps transform is computed
+        # > deformable level: level at which the deformable transform is computed
         # > evaluation level: level at which the reconstruction evaluation is performed
         self.keypoint_level = 7
         self.deformable_level = 8
         self.evaluation_level = 9
 
-        # Whether the affine/tps transform is computed using RANSAC.
+        # Whether the affine/deformable transform is computed using RANSAC.
         self.affine_ransac = False
         self.deformable_ransac = False
 
