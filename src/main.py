@@ -25,16 +25,25 @@ def collect_arguments():
         type=Path,
         help="Path to the save directory."
     )
+    parser.add_argument(
+        "--mode",
+        required=True,
+        type=str,
+        default="affine",
+        help="Mode to run hiprova, options are 'prealignment', 'affine' or 'deformable'."
+    )
 
     args = parser.parse_args()
 
     data_dir = args.datadir
     save_dir = args.savedir
+    mode = args.mode.lower()
 
     assert data_dir.is_dir(), "Data directory does not exist."
     save_dir.mkdir(parents=True, exist_ok=True)
+    assert mode in ["prealignment", "affine", "deformable"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable']."
 
-    return data_dir, save_dir
+    return data_dir, save_dir, mode
 
 
 def main(): 
@@ -43,7 +52,7 @@ def main():
     """
 
     # Get args
-    data_dir, save_dir = collect_arguments()
+    data_dir, save_dir, mode = collect_arguments()
     
     # Get patients
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
@@ -56,7 +65,7 @@ def main():
         constructor = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
-            tform_tps = False,
+            mode = mode,
         )
         constructor.run()
 

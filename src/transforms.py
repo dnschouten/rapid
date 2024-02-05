@@ -112,13 +112,13 @@ def apply_affine_transform_fullres(image: pyvips.Image, mask: pyvips.Image, rota
     return image_warped, mask_warped
 
 
-def apply_tps_ransac(moving_points: np.ndarray, ref_points: np.ndarray, device: Any, ransac_thres_tps: float = 0.05) -> tuple([np.ndarray, np.ndarray, np.ndarray]):
+def apply_deformable_ransac(moving_points: np.ndarray, ref_points: np.ndarray, device: Any, ransac_thres_deformable: float = 0.05) -> tuple([np.ndarray, np.ndarray, np.ndarray]):
     """
-    Function to apply RANSAC to filter plausible matches for TPS transform.
+    Function to apply RANSAC to filter plausible matches for deformable transform.
     """
 
     # Apply ransac to further filter plausible matches
-    inliers = RANSAC.nr_RANSAC(ref_points, moving_points, device, thr = ransac_thres_tps)
+    inliers = RANSAC.nr_RANSAC(ref_points, moving_points, device, thr = ransac_thres_deformable)
 
     ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
     moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
@@ -126,13 +126,13 @@ def apply_tps_ransac(moving_points: np.ndarray, ref_points: np.ndarray, device: 
     return ref_points, moving_points
 
 
-def estimate_tps_transform(moving_image: np.ndarray, ref_image: np.ndarray, moving_points: np.ndarray, ref_points: np.ndarray, ransac: bool, ransac_thres_tps: float, tps_level: int, keypoint_level: int, device: Any) -> tuple([pyvips.Image, Any]):
+def estimate_deformable_transform(moving_image: np.ndarray, ref_image: np.ndarray, moving_points: np.ndarray, ref_points: np.ndarray, ransac: bool, ransac_thres_deformable: float, deformable_level: int, keypoint_level: int, device: Any) -> tuple([pyvips.Image, Any]):
     """
-    Function to estimate the parameters for the TPS transform.
+    Function to estimate the parameters for the deformable transform.
     """
 
     if ransac:
-        ref_points, moving_points = apply_tps_ransac(moving_points, ref_points, ransac_thres_tps, device)
+        ref_points, moving_points = apply_deformable_ransac(moving_points, ref_points, ransac_thres_deformable, device)
 
     # Get image shapes
     h1, w1 = ref_image.shape[:2]
@@ -142,8 +142,8 @@ def estimate_tps_transform(moving_image: np.ndarray, ref_image: np.ndarray, movi
     c_ref = np.float32(ref_points) / np.float32([w1,h1])
     c_moving = np.float32(moving_points) / np.float32([w2,h2])
 
-    # Downsample image to prevent OOM in TPS grid
-    downsample = 2 ** (tps_level - keypoint_level)
+    # Downsample image to prevent OOM in deformable grid
+    downsample = 2 ** (deformable_level - keypoint_level)
     moving_image_ds = cv2.resize(moving_image, (w2//downsample, h2//downsample), interpolation=cv2.INTER_AREA)
 
     # Compute theta from coordinates
@@ -176,9 +176,9 @@ def estimate_tps_transform(moving_image: np.ndarray, ref_image: np.ndarray, movi
     return index_map, grid
 
 
-def apply_tps_transform(moving_image: np.ndarray, moving_mask: np.ndarray, index_map: pyvips.Image) -> tuple([np.ndarray, np.ndarray]):
+def apply_deformable_transform(moving_image: np.ndarray, moving_mask: np.ndarray, index_map: pyvips.Image) -> tuple([np.ndarray, np.ndarray]):
     """
-    Function to apply the TPS transform. We still use
+    Function to apply the deformable transform. We still use
     pyvips for the actual transform as torch can at most handle ~1000x1000 
     transforms and we need these larger images for downstream tasks.
     """
@@ -204,7 +204,7 @@ def apply_tps_transform(moving_image: np.ndarray, moving_mask: np.ndarray, index
     return moving_image_warped, moving_mask_warped
 
 
-def apply_tps_transform_fullres(image: pyvips.Image, mask: pyvips.Image, grid: Any, scaling: int) -> tuple([pyvips.Image, pyvips.Image]):
+def apply_deformable_transform_fullres(image: pyvips.Image, mask: pyvips.Image, grid: Any, scaling: int) -> tuple([pyvips.Image, pyvips.Image]):
     """
     Apply thin plate splines transform to the full resolution.
     """

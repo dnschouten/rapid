@@ -23,7 +23,7 @@ from evaluation import *
 
 class Hiprova:
 
-    def __init__(self, data_dir: Path, save_dir: Path, tform_tps: bool=False) -> None:
+    def __init__(self, data_dir: Path, save_dir: Path, mode: str) -> None:
         
         self.config = Config()
 
@@ -31,8 +31,8 @@ class Hiprova:
         self.save_dir = save_dir
         self.debug_dir = save_dir.joinpath("debug")
         self.debug_dir.mkdir(exist_ok=True, parents=True)
+        self.mode = mode
 
-        self.tform_tps = tform_tps
         self.full_resolution = self.config.full_resolution_level > 0
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
@@ -58,20 +58,20 @@ class Hiprova:
 
         # Set level at which to load the image
         self.keypoint_level = self.config.keypoint_level
-        self.tps_level = self.config.tps_level
+        self.deformable_level = self.config.deformable_level
         self.evaluation_level = self.config.evaluation_level
         self.mask_level = self.keypoint_level-self.config.image_mask_level_diff
         assert self.full_resolution_level_image <= self.keypoint_level, "Full resolution level should be lower than image level."
         self.fullres_scaling = 2 ** (self.keypoint_level - self.full_resolution_level_image)
-        self.tps_scaling = 2 ** (self.tps_level - self.keypoint_level)
+        self.deformable_scaling = 2 ** (self.deformable_level - self.keypoint_level)
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.ransac_thres_affine = self.config.ransac_thresholds[self.detector_name]
-        self.ransac_thres_tps = self.ransac_thres_affine / 2
+        self.ransac_thres_deformable = self.ransac_thres_affine / 2
 
         self.affine_ransac = self.config.affine_ransac
-        self.tps_ransac = self.config.tps_ransac
+        self.deformable_ransac = self.config.deformable_ransac
 
         return
     
@@ -490,7 +490,7 @@ class Hiprova:
 
         return final_images, final_masks, final_images_fullres, final_masks_fullres
 
-    def tps_registration(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.Image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
+    def deformable_registration(self, images: List[np.ndarray], masks: List[np.ndarray], images_fullres: List[pyvips.Image], masks_fullres: List[pyvips.Image]) -> tuple([List, List, List, List]):
         """
         Method to perform a deformable registration between adjacent slides. This
         step consists of:
@@ -537,33 +537,33 @@ class Hiprova:
                 moving_image = moving_image,
                 ref_points = ref_points,
                 moving_points = moving_points,
-                tform = "tps",
-                savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_tps_{mov}_to_{ref}.png")
+                tform = "deformable",
+                savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_deformable_{mov}_to_{ref}.png")
             )
 
             # Apply transforms
-            index_map, grid = estimate_tps_transform(
+            index_map, grid = estimate_deformable_transform(
                 moving_image = moving_image,
                 ref_image = ref_image,
                 moving_points = moving_points, 
                 ref_points = ref_points, 
-                ransac = self.tps_ransac, 
-                ransac_thres_tps = self.ransac_thres_tps,
-                tps_level = self.tps_level,
+                ransac = self.deformable_ransac, 
+                ransac_thres_deformable = self.ransac_thres_deformable,
+                deformable_level = self.deformable_level,
                 keypoint_level = self.keypoint_level,
                 device = self.device
             )
-            moving_image_warped, moving_mask_warped = apply_tps_transform(
+            moving_image_warped, moving_mask_warped = apply_deformable_transform(
                 moving_image = moving_image,
                 moving_mask = moving_mask,
                 index_map = index_map    
             )
-            plot_warped_tps_images(
+            plot_warped_deformable_images(
                 ref_image = ref_image,
                 moving_image = moving_image,
                 moving_image_warped = moving_image_warped,
                 grid = grid,
-                savepath = self.local_save_dir.joinpath("warps", f"warps_tps_{mov}_to_{ref}.png")
+                savepath = self.local_save_dir.joinpath("warps", f"warps_deformable_{mov}_to_{ref}.png")
             )
 
             # Save final image
@@ -572,11 +572,11 @@ class Hiprova:
 
             # Perform full resolution reconstruction
             if self.full_resolution:
-                moving_image_fullres_warped, moving_mask_fullres_warped = apply_tps_transform_fullres(
+                moving_image_fullres_warped, moving_mask_fullres_warped = apply_deformable_transform_fullres(
                     image = images_fullres[mov],
                     mask = masks_fullres[mov],
                     grid = grid,
-                    scaling = self.tps_scaling
+                    scaling = self.deformable_scaling
                 )
                 final_images_fullres[mov] = moving_image_fullres_warped
                 final_masks_fullres[mov] = moving_mask_fullres_warped
@@ -598,21 +598,8 @@ class Hiprova:
         )
 
         # Affine registration to improve prealignment
-        images, masks, fullres_images, fullres_masks = self.affine_registration(
-            images = images,
-            masks = masks,
-            images_fullres = fullres_images,
-            masks_fullres = fullres_masks,
-        )
-        plot_final_reconstruction(
-            final_images = images, 
-            save_dir = self.local_save_dir, 
-            tform = "affine"
-        )
-
-        # Deformable registration as final step
-        if self.tform_tps:
-            images, masks, fullres_images, fullres_masks = self.tps_registration(
+        if self.mode in ["affine", "deformable"]:
+            images, masks, fullres_images, fullres_masks = self.affine_registration(
                 images = images,
                 masks = masks,
                 images_fullres = fullres_images,
@@ -621,7 +608,21 @@ class Hiprova:
             plot_final_reconstruction(
                 final_images = images, 
                 save_dir = self.local_save_dir, 
-                tform = "tps"
+                tform = "affine"
+            )
+
+        # Deformable registration as final step
+        if self.mode == "deformable":
+            images, masks, fullres_images, fullres_masks = self.deformable_registration(
+                images = images,
+                masks = masks,
+                images_fullres = fullres_images,
+                masks_fullres = fullres_masks,
+            )
+            plot_final_reconstruction(
+                final_images = images, 
+                save_dir = self.local_save_dir, 
+                tform = "deformable"
             )
 
         # Save to use for 3D reconstruction

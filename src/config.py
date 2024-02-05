@@ -11,12 +11,12 @@ class Config:
         # > tform level: level at which the tps transform is computed
         # > evaluation level: level at which the reconstruction evaluation is performed
         self.keypoint_level = 7
-        self.tps_level = 8
+        self.deformable_level = 8
         self.evaluation_level = 9
 
         # Whether the affine/tps transform is computed using RANSAC.
         self.affine_ransac = False
-        self.tps_ransac = False
+        self.deformable_ransac = False
 
         # Difference in number of levels between the original images and the generated tissue masks
         self.image_mask_level_diff = 4

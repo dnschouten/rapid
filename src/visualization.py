@@ -81,8 +81,8 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
             ref_points = ref_points,
             image = moving_image
         )
-    elif tform == "tps":
-        ref_points_ransac, moving_points_ransac = apply_tps_ransac(
+    elif tform == "deformable":
+        ref_points_ransac, moving_points_ransac = apply_deformable_ransac(
             moving_points = moving_points,
             ref_points = ref_points,
             device = "cpu"
@@ -177,12 +177,12 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
     return
 
 
-def plot_warped_tps_images(ref_image: np.ndarray, moving_image: np.ndarray, moving_image_warped: np.ndarray, grid: Any, savepath: pathlib.Path) -> None:
+def plot_warped_deformable_images(ref_image: np.ndarray, moving_image: np.ndarray, moving_image_warped: np.ndarray, grid: Any, savepath: pathlib.Path) -> None:
     """
-    Function to show the TPS-warped image and the corresponding grid.
+    Function to show the deformable warped image and the corresponding grid.
     """
 
-    # Apply TPS to grid for visualization purposes
+    # Apply deformable registration to grid for visualization purposes
     image_shape = moving_image.shape[:2]
     warped_grid = grid_to_image(image_size=image_shape, grid=grid)
 
@@ -198,7 +198,7 @@ def plot_warped_tps_images(ref_image: np.ndarray, moving_image: np.ndarray, movi
     plt.subplot(143)
     plt.imshow(warped_grid)
     plt.axis("off")
-    plt.title("tps grid")
+    plt.title("deformable grid")
     plt.subplot(144)
     plt.imshow(moving_image_warped)
     plt.axis("off")
