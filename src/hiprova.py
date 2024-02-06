@@ -218,9 +218,8 @@ class Hiprova:
 
         # Get common size
         factor = self.config.padding_ratio
-        max_h = int(np.max([i.shape[0] for i in self.raw_images]) * factor)
-        max_w = int(np.max([i.shape[1] for i in self.raw_images]) * factor)
-        c=1
+        max_h = int(np.max([i.shape for i in self.raw_images]) * factor)
+        max_w = int(np.max([i.shape for i in self.raw_images]) * factor)
 
         for c, (image, mask) in enumerate(zip(self.raw_images, self.raw_masks)):
             
@@ -288,6 +287,7 @@ class Hiprova:
         print(f" - performing prealignment")
         self.rotations = []
         self.centerpoints = []
+        self.axes = []
         self.ellipses = []
 
         # Find ellipse for all images
@@ -299,19 +299,26 @@ class Hiprova:
 
             # Fit ellipse based on contour 
             ellipse = cv2.fitEllipse(contour)
-            center, _, rotation = ellipse
+            center, axis, rotation = ellipse
 
             # Correct rotation for opencv/mpl conventions
             self.rotations.append(rotation)
             self.centerpoints.append(center)
+            self.axes.append(axis)
             self.ellipses.append(ellipse)
+
+        # Find best ref image based on the most elongated ellipse
+        ellipse_ratios = [np.max(i[1]) / np.min(i[1]) for i in self.ellipses]
+        self.ref_idx = np.argmax(ellipse_ratios[1:-1]) + 1
+
+        # Find common centerpoint of all ellipses to orient towards
+        self.common_center = np.mean([i[0] for i in self.ellipses], axis=0).astype("int")
 
         # Plot resulting ellipse
         plot_ellipses(
             images=self.images, 
-            ellipses=self.ellipses, 
-            centerpoints=self.centerpoints, 
-            rotations=self.rotations, 
+            ellipses=self.ellipses,
+            ref_idx = self.ref_idx,
             save_dir=self.local_save_dir
         )
 
@@ -330,10 +337,12 @@ class Hiprova:
         final_images_fullres = []
         final_masks_fullres = []
 
-        # Find common centerpoint of all ellipses to orient towards
-        self.common_center = np.mean([i[0] for i in self.ellipses], axis=0).astype("int")
+        for image, mask, image_fullres, mask_fullres, ellipse in zip(images, masks, images_fullres, masks_fullres, self.ellipses):
 
-        for image, mask, image_fullres, mask_fullres, rotation, center in zip(images, masks, images_fullres, masks_fullres, self.rotations, self.centerpoints):
+            # Ensure horizontal slices 
+            center, axis, rotation = ellipse
+            if axis[1] > axis[0]:
+                rotation += 90
 
             # Adjust rotation 
             rotation_matrix = cv2.getRotationMatrix2D(tuple(center), rotation, 1)
@@ -404,19 +413,19 @@ class Hiprova:
         print(f" - performing affine reconstruction")
 
         # We use the mid slice as reference point and move all images toward this slice.
-        mid_slice = int(np.ceil(len(images)//2))
+        # self.ref_idx = int(np.ceil(len(images)//2))
         final_images = [None] * len(images)
-        final_images[mid_slice] = images[mid_slice]
+        final_images[self.ref_idx] = images[self.ref_idx]
         final_masks = [None] * len(images)
-        final_masks[mid_slice] = masks[mid_slice]
+        final_masks[self.ref_idx] = masks[self.ref_idx]
         final_images_fullres = [None] * len(images)
-        final_images_fullres[mid_slice] = images_fullres[mid_slice]
+        final_images_fullres[self.ref_idx] = images_fullres[self.ref_idx]
         final_masks_fullres = [None] * len(images)
-        final_masks_fullres[mid_slice] = masks_fullres[mid_slice]
+        final_masks_fullres[self.ref_idx] = masks_fullres[self.ref_idx]
 
-        moving_indices = list(np.arange(0, mid_slice)[::-1]) + list(np.arange(mid_slice+1, len(images)))
+        moving_indices = list(np.arange(0, self.ref_idx)[::-1]) + list(np.arange(self.ref_idx+1, len(images)))
         moving_indices = list(map(int, moving_indices))
-        ref_indices = list(np.arange(0, mid_slice)[::-1] + 1) + list(np.arange(mid_slice+1, len(images)) - 1)
+        ref_indices = list(np.arange(0, self.ref_idx)[::-1] + 1) + list(np.arange(self.ref_idx+1, len(images)) - 1)
         ref_indices = list(map(int, ref_indices))
 
         for mov, ref in zip(moving_indices, ref_indices):
@@ -522,19 +531,19 @@ class Hiprova:
         print(f" - performing deformable reconstruction")
 
         # We use the mid slice as reference point and move all images toward this slice.
-        mid_slice = int(np.ceil(len(images)//2))
+        self.ref_idx = int(np.ceil(len(images)//2))
         final_images = [None] * len(images)
-        final_images[mid_slice] = images[mid_slice]
+        final_images[self.ref_idx] = images[self.ref_idx]
         final_masks = [None] * len(images)
-        final_masks[mid_slice] = masks[mid_slice]
+        final_masks[self.ref_idx] = masks[self.ref_idx]
         final_images_fullres = [None] * len(images)
-        final_images_fullres[mid_slice] = images_fullres[mid_slice]
+        final_images_fullres[self.ref_idx] = images_fullres[self.ref_idx]
         final_masks_fullres = [None] * len(images)
-        final_masks_fullres[mid_slice] = masks_fullres[mid_slice]
+        final_masks_fullres[self.ref_idx] = masks_fullres[self.ref_idx]
 
-        moving_indices = list(np.arange(0, mid_slice)[::-1]) + list(np.arange(mid_slice+1, len(images)))
+        moving_indices = list(np.arange(0, self.ref_idx)[::-1]) + list(np.arange(self.ref_idx+1, len(images)))
         moving_indices = list(map(int, moving_indices))
-        ref_indices = list(np.arange(0, mid_slice)[::-1] + 1) + list(np.arange(mid_slice+1, len(images)) - 1)
+        ref_indices = list(np.arange(0, self.ref_idx)[::-1] + 1) + list(np.arange(self.ref_idx+1, len(images)) - 1)
         ref_indices = list(map(int, ref_indices))
 
         for mov, ref in zip(moving_indices, ref_indices):
@@ -668,15 +677,15 @@ class Hiprova:
         total_xy_downsample = 2 ** self.evaluation_level
         new_size = tuple(int(i / partial_xy_downsample) for i in self.final_images[0].shape[:2][::-1])
         
-        self.final_images = [cv2.resize(i, new_size, interpolation=cv2.INTER_AREA) for i in self.final_images]
-        self.final_masks = [cv2.resize(i, new_size, interpolation=cv2.INTER_NEAREST) for i in self.final_masks]
+        self.final_images_ds = [cv2.resize(i, new_size, interpolation=cv2.INTER_AREA) for i in self.final_images]
+        self.final_masks_ds = [cv2.resize(i, new_size, interpolation=cv2.INTER_NEAREST) for i in self.final_masks]
         
         # Fetch fresh contours
-        self.final_contours = []
-        for mask in self.final_masks:
+        self.final_contours_ds = []
+        for mask in self.final_masks_ds:
             contour, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
             contour = np.squeeze(max(contour, key=cv2.contourArea))
-            self.final_contours.append(contour)
+            self.final_contours_ds.append(contour)
 
         # Block size is the number of empty slices we have to insert between
         # actual slices for a true to size 3D model.
@@ -685,10 +694,10 @@ class Hiprova:
 
         # Pre-allocate 3D volumes 
         self.final_reconstruction_3d = np.zeros(
-            (self.final_images[0].shape[0], 
-             self.final_images[0].shape[1], 
-             self.block_size*(len(self.final_images)+1),
-             self.final_images[0].shape[2]),
+            (self.final_images_ds[0].shape[0], 
+             self.final_images_ds[0].shape[1], 
+             self.block_size*(len(self.final_images_ds)+1),
+             self.final_images_ds[0].shape[2]),
              dtype="uint8"
         )
         self.final_reconstruction_3d_mask = np.zeros(
@@ -697,7 +706,7 @@ class Hiprova:
         )
 
         # Populate actual slices
-        for c, (im, mask) in enumerate(zip(self.final_images, self.final_masks)):
+        for c, (im, mask) in enumerate(zip(self.final_images_ds, self.final_masks_ds)):
             self.final_reconstruction_3d[:, :, self.block_size*(c+1), :] = im
             self.final_reconstruction_3d_mask[:, :, self.block_size*(c+1)] = mask
             
@@ -713,7 +722,7 @@ class Hiprova:
         Method to interpolate the 2D slices to a binary 3D volume.
         """
 
-        self.filled_slices = [self.block_size*(i+1) for i in range(len(self.final_images))]
+        self.filled_slices = [self.block_size*(i+1) for i in range(len(self.final_images_ds))]
 
         # Loop over slices for interpolation
         for i in range(len(self.filled_slices)-1):
@@ -724,11 +733,11 @@ class Hiprova:
 
             # Get contours, simplify and resample
             num_points = 360
-            contour_a = self.final_contours[i]
+            contour_a = self.final_contours_ds[i]
             contour_a = simplify_contour(contour_a)
             contour_a = resample_contour_radial(contour_a, num_points)
 
-            contour_b = self.final_contours[i+1]
+            contour_b = self.final_contours_ds[i+1]
             contour_b = simplify_contour(contour_b)
             contour_b = resample_contour_radial(contour_b, num_points)
 
@@ -748,9 +757,11 @@ class Hiprova:
                 self.final_reconstruction_3d_mask[:, :, self.filled_slices[i]+j+1] = mask
 
         # Plot snapshot of result
+        image_indices = sorted([i.name.split("_")[0] for i in self.local_save_dir.glob("*.png")])
+        idx = int(image_indices[-1]) + 1
         plot_3d_volume(
             volume = self.final_reconstruction_3d_mask, 
-            savepath = self.local_save_dir.joinpath("reconstruction_3d.png")
+            savepath = self.local_save_dir.joinpath(f"{str(idx).zfill(2)}_reconstruction_3d.png")
         )
 
         return
