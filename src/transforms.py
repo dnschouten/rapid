@@ -19,21 +19,22 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
     """
 
     # Apply ransac to further filter plausible matches
-    res_thres = int(image.shape[0] * ransac_thres)
-    _, inliers = ransac(
-        (moving_points, ref_points),
-        EuclideanTransform, 
-        min_samples=int(len(ref_points)/2), 
-        residual_threshold=res_thres,
-        max_trials=1000
-    )
+    if len(moving_points) > 10:
+        res_thres = int(image.shape[0] * ransac_thres)
+        _, inliers = ransac(
+            (moving_points, ref_points),
+            EuclideanTransform, 
+            min_samples=int(len(ref_points)/4), 
+            residual_threshold=res_thres,
+            max_trials=1000
+        )
+    else:
+        inliers = None
 
-    # Filter matches based on RANSAC
-    if np.sum(inliers) > 5:
+    # Filter matches based on RANSAC if there are enough inliers
+    if isinstance(inliers, np.ndarray) and np.sum(inliers) > 10:
         ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
         moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
-    else:
-        print("RANSAC failed to find >5 inliers, returning all matches.")
 
     return ref_points, moving_points
 
@@ -43,16 +44,21 @@ def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray,
     Function to estimate an affine transform between two sets of points.
     """
 
-    # Filter matches based on RANSAC
-    if ransac:
-        ref_points, moving_points, inliers = apply_affine_ransac(moving_points, ref_points, image, ransac_thres)
+    if len(moving_points) > 0:
+        # Filter matches based on RANSAC
+        if ransac:
+            ref_points, moving_points, _ = apply_affine_ransac(moving_points, ref_points, image, ransac_thres)
 
-    # Estimate limited affine transform with only rotation and translation
-    matrix = transform.estimate_transform(
-        "euclidean", 
-        moving_points, 
-        ref_points
-    )
+        # Estimate limited affine transform with only rotation and translation
+        matrix = transform.estimate_transform(
+            "euclidean", 
+            moving_points, 
+            ref_points
+        )
+        
+    # Return identity matrix if no keypoints are found
+    else:
+        matrix = transform.EuclideanTransform(rotation = 0, translation = 0)
 
     return matrix
 
