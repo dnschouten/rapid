@@ -1,5 +1,6 @@
 import argparse
 import pandas as pd
+import json
 from pathlib import Path
 
 from hiprova import Hiprova
@@ -29,7 +30,13 @@ def collect_arguments():
         required=True,
         type=str,
         default="affine",
-        help="Mode to run hiprova, options are 'prealignment', 'affine' or 'deformable'."
+        help="Mode to run hiprova, options are 'prealignment', 'affine', 'deformable' or 'valis'."
+    )
+    parser.add_argument(
+        "--experiment",
+        required=True,
+        type=str,
+        help="Experiment name, will be used to save the results from the experiment."
     )
 
     args = parser.parse_args()
@@ -37,12 +44,13 @@ def collect_arguments():
     data_dir = args.datadir
     save_dir = args.savedir
     mode = args.mode.lower()
+    experiment = args.experiment
 
     assert data_dir.is_dir(), "Data directory does not exist."
     save_dir.mkdir(parents=True, exist_ok=True)
-    assert mode in ["prealignment", "affine", "deformable"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable']."
+    assert mode in ["prealignment", "affine", "deformable", "valis"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable', 'valis']."
 
-    return data_dir, save_dir, mode
+    return data_dir, save_dir, mode, experiment
 
 
 def main(): 
@@ -51,7 +59,7 @@ def main():
     """
 
     # Get args
-    data_dir, save_dir, mode = collect_arguments()
+    data_dir, save_dir, mode, experiment = collect_arguments()
     
     # Get patients
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
@@ -64,13 +72,13 @@ def main():
     )
     df = pd.DataFrame()
 
-    for pt in patients[1:]:
+    for pt in patients:
 
         print(f"\nProcessing patient {pt.name}")
 
         constructor = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
-            save_dir = save_dir.joinpath(pt.name),
+            save_dir = save_dir.joinpath(experiment, pt.name),
             mode = mode,
         )
         constructor.run()
@@ -86,7 +94,21 @@ def main():
         df = pd.concat([df, new_df], ignore_index=True)
 
     # Save dataframe
-    df.to_excel(save_dir.joinpath("aggregate_metrics.xlsx"), index=False)
+    df.to_excel(save_dir.joinpath(experiment, "aggregate_metrics.xlsx"), index=False)
+
+    # Save most important config details
+    config = {
+        "mode": constructor.mode,
+        "detector": constructor.detector_name,
+        "keypoint_level": constructor.keypoint_level,
+        "deformable_level": constructor.deformable_level,
+        "evaluation_level": constructor.evaluation_level,
+        "affine_ransac": constructor.affine_ransac,
+        "deformable_ransac": constructor.deformable_ransac,
+        "ransac_thresholds": constructor.ransac_thres_affine,
+    } 
+    with open(save_dir.joinpath(experiment, "config.json"), "w") as f:
+        json.dump(config, f)
 
     return
 
