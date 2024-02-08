@@ -13,24 +13,27 @@ def get_keypoints(detector: str, ref_image: np.ndarray, moving_image: np.ndarray
     Wrapped function to get either LightGlue or DALF keypoints
     """
 
-    assert detector.lower() in ["lightglue", "dalf"]
-
-    if detector.lower() == "lightglue":
-        points_ref, points_moving = get_lightglue_keypoints(ref_image, moving_image)
-    elif detector.lower() == "dalf":
+    if detector == "superpoint":
+        points_ref, points_moving, scores = get_lightglue_keypoints(ref_image, moving_image, detector)
+    elif detector == "disk":
+        points_ref, points_moving, scores = get_lightglue_keypoints(ref_image, moving_image, detector)
+    elif detector == "dalf":
         points_ref, points_moving = get_dalf_keypoints(ref_image, moving_image)
 
-    return points_ref, points_moving
+    return points_ref, points_moving, scores
 
 
-def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: str) -> tuple[np.ndarray, np.ndarray]:
     """
     Function to get matching keypoints with LightGlue
     """
 
     # Initialize lightglue detector and matcher
-    lightglue_detector = SuperPoint(max_num_keypoints=None).eval().cuda()  
-    lightglue_matcher = LightGlue(features='superpoint').eval().cuda() 
+    if detector == "superpoint":
+        lightglue_detector = SuperPoint(max_num_keypoints=None).eval().cuda()  
+    elif detector == "disk":
+        lightglue_detector = DISK(max_num_keypoints=None).eval().cuda()
+    lightglue_matcher = LightGlue(features=detector).eval().cuda() 
 
     # Convert images to tensor
     ref_tensor = torch.tensor(ref_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
@@ -49,7 +52,7 @@ def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray) -> 
     points_ref = np.float32([i.astype("int") for i in ref_features2['keypoints'][matches[..., 0]].cpu().numpy()])
     points_moving = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
 
-    return points_ref, points_moving
+    return points_ref, points_moving, matches01["scores"].detach().cpu().numpy()
 
 
 def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
