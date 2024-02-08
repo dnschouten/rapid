@@ -1,6 +1,7 @@
 # Project specific
 src/deprecated.py
 evaluation/*.sh
+*.out
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
