@@ -29,16 +29,16 @@ def plot_initial_reconstruction(images: List[np.ndarray], save_dir: pathlib.Path
     return
 
 
-def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], centerpoints: List[Tuple], rotations: np.ndarray, save_dir: pathlib.Path) -> None:
+def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], ref_idx: int, save_dir: pathlib.Path) -> None:
     """
     Function to plot the fitted ellipses on the whole mounts.
     """
 
     fig, axs = plt.subplots(1, len(images), figsize=(10, 5))
-    for image, rotation, ellipse, center, ax in zip(images, rotations, ellipses, centerpoints, axs):
+    for c, (image, ellipse, ax) in enumerate(zip(images, ellipses, axs)):
         
         # Create ellipse patch in matplotlib
-        axes = ellipse[1]
+        center, axes, rotation = ellipse
         ellipse_patch = patches.Ellipse(center, width=axes[1], height=axes[0], angle=rotation-90, edgecolor='g', facecolor='none')
         
         # Show image, centerpoint and ellipse
@@ -46,9 +46,32 @@ def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], centerpoints:
         ax.scatter(center[0], center[1], c="r")
         ax.add_patch(ellipse_patch)
         ax.axis("off")
+        if c == ref_idx:
+            ax.set_title("ref")
+        else:
+            ax.set_title(f"moving")
 
-    plt.savefig(save_dir.joinpath(f"ellipses.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(save_dir.joinpath(f"02_ellipses.png"), dpi=300, bbox_inches="tight")
     plt.close()
+
+    return
+
+
+def plot_stain_normalization(images: List[np.ndarray], normalized_images: List[np.ndarray], savepath: pathlib.Path) -> None:
+    """
+    Function to plot the results of the stain normalization procedure.
+    """
+
+    plt.figure(figsize=(10, 5))
+    plt.suptitle("Macenko stain normalization effect")
+    for c, (image, normalized_image) in enumerate(zip(images, normalized_images), 1):
+        plt.subplot(2, len(images), c)
+        plt.imshow(image)
+        plt.axis("off")
+        plt.subplot(2, len(images), c+len(images))
+        plt.imshow(normalized_image)
+        plt.axis("off")
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
 
     return
 
@@ -63,7 +86,7 @@ def plot_prealignment(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
         plt.subplot(1, len(images), c)
         plt.imshow(image)
         plt.axis("off")
-    plt.savefig(save_dir.joinpath("02_prealignment.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(save_dir.joinpath("03_prealignment.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
     return
@@ -85,7 +108,7 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
         ref_points_ransac, moving_points_ransac = apply_deformable_ransac(
             moving_points = moving_points,
             ref_points = ref_points,
-            device = "cpu"
+            device = "cuda"
         )
 
     # Define matches and keypoints according to opencv standards
@@ -214,8 +237,11 @@ def plot_final_reconstruction(final_images: List, save_dir: pathlib.Path, tform:
     Plot final reconstruction using the affine transformation computed from the detected keypoints.
     """
 
-    # Overview figure of the slices
-    savepath = save_dir.joinpath(f"03_final_reconstruction_{tform}.png")
+    # Get path to save
+    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
+    idx = int(image_indices[-1]) + 1
+    savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_final_reconstruction_{tform}.png")
+
     plt.figure(figsize=(10, 5))
     for c, im in enumerate(final_images):
         plt.subplot(1, len(final_images), c+1)
@@ -263,14 +289,16 @@ def plot_tre_per_pair(ref_image: np.ndarray, moving_image: np.ndarray, ref_point
     Function to visualize the TRE per pair of images.
     """
 
-    plt.figure()
-    plt.suptitle(f"TRE: {tre:.2f} microns")
+    plt.figure(figsize=(8, 4))
+    plt.suptitle(f"TRE: {tre:.2f} microns (n={len(ref_points)})")   
     plt.subplot(131)
     plt.imshow(ref_image)
+    plt.scatter(ref_points[:, 0], ref_points[:, 1], c="r", s=5)
     plt.title("im1")
     plt.axis("off")
     plt.subplot(132)
     plt.imshow(moving_image)
+    plt.scatter(moving_points[:, 0], moving_points[:, 1], c="b", s=5)
     plt.title("im2")
     plt.axis("off")
     plt.subplot(133)
@@ -280,13 +308,14 @@ def plot_tre_per_pair(ref_image: np.ndarray, moving_image: np.ndarray, ref_point
     for i in range(len(ref_points)):
         plt.plot([ref_points[i, 0], moving_points[i, 0]], [ref_points[i, 1], moving_points[i, 1]], c="w", lw=1)
     plt.legend(["ref", "moving"])
+    plt.axis("off")
     plt.savefig(savepath, dpi=300, bbox_inches="tight")
     plt.close()
 
     return
 
 
-def plot_3d_volume(volume: np.ndarray, save_dir: pathlib.Path) -> None:
+def plot_3d_volume(volume: np.ndarray, savepath: pathlib.Path) -> None:
     """
     Method to plot all the levels of the 3D reconstructed volume in a single 3D plot.
     """
@@ -316,7 +345,7 @@ def plot_3d_volume(volume: np.ndarray, save_dir: pathlib.Path) -> None:
         margin=dict(t=0, b=0, l=0, r=0)
     )
 
-    fig.write_image(save_dir.joinpath("3d_reconstruction.png"), engine="kaleido")
+    fig.write_image(savepath, engine="kaleido")
     fig.show()
 
     return

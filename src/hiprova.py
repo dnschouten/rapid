@@ -7,11 +7,13 @@ import torch
 import copy 
 import subprocess
 import shutil
+import torchstain
 import sys
 sys.path.append("/root/DALF_CVPR_2023")
 
 from pathlib import Path
 from typing import List
+from torchvision import transforms
 
 from visualization import *
 from utils import *
@@ -29,15 +31,13 @@ class Hiprova:
 
         self.data_dir = data_dir
         self.save_dir = save_dir
-        self.debug_dir = save_dir.joinpath("debug")
-        self.debug_dir.mkdir(exist_ok=True, parents=True)
         self.mode = mode
 
         self.full_resolution = self.config.full_resolution_level > 0
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        assert self.detector_name in ["dalf", "lightglue"], "Sorry, only DALF and lightglue detectors are supported."
+        assert self.detector_name in ["dalf", "superpoint", "disk"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk']."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
         if not self.local_save_dir.is_dir():
@@ -278,6 +278,42 @@ class Hiprova:
 
         return
 
+    def normalize_stains(self) -> None:
+        """
+        Method to perform stain normalization to aid in keypoint detection. 
+        """
+
+        # Get ref image
+        ref_image_idx = int(len(self.images) // 2)
+        ref_image = self.images[ref_image_idx]
+        normalized_images = []
+
+        T = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x*255)
+        ])
+        normalizer = torchstain.normalizers.MacenkoNormalizer(backend="torch")
+        normalizer.fit(T(ref_image))
+
+        for im, mask in zip(self.images, self.masks):
+
+            # Get stain normalized image, remove background artefacts and save
+            norm_im, _, _ = normalizer.normalize(T(im), stains=True)
+            norm_im = norm_im.numpy().astype("uint8")
+            norm_im[mask == 0] = 255
+            normalized_images.append(norm_im)
+
+        # Plot resulting normalization
+        plot_stain_normalization(
+            images = self.images,
+            normalized_images = normalized_images,
+            savepath = self.local_save_dir.joinpath("stain_normalization.png")
+        )
+
+        self.images = copy.copy(normalized_images)
+
+        return
+
     def find_rotations(self) -> None:
         """
         Method to get the rotation of the prostate based on an
@@ -448,7 +484,7 @@ class Hiprova:
                 ref_image = final_images[ref]
 
                 # Extract keypoints
-                ref_points, moving_points = get_keypoints(
+                ref_points, moving_points, _ = get_keypoints(
                     detector = self.detector_name, 
                     ref_image = ref_image, 
                     moving_image = moving_image
@@ -553,7 +589,7 @@ class Hiprova:
             ref_image = images[ref]
 
             # Extract keypoints
-            ref_points, moving_points = get_keypoints(
+            ref_points, moving_points, _ = get_keypoints(
                 detector = self.detector_name, 
                 ref_image = ref_image, 
                 moving_image = moving_image
@@ -614,6 +650,14 @@ class Hiprova:
         """
         Method to perform all steps of the registration process.
         """
+
+        # Skip everything if we're just evaluating the VALIS baselinev
+        if self.mode == "valis":
+            self.final_images = self.images
+            self.final_masks = self.masks
+            self.final_images_fullres = self.fullres_images
+            self.final_masks_fullres = self.fullres_masks
+            return
 
         # Pre-alignment as initial step
         images, masks, fullres_images, fullres_masks = self.prealignment(
@@ -776,6 +820,7 @@ class Hiprova:
         # Compute average registration error between keypoints of adjacent images
         self.tre = compute_tre_keypoints(
             images = self.final_images,
+            detector = self.detector_name,
             level = self.keypoint_level,
             savedir = self.local_save_dir,
             spacing = self.pixel_spacing_image
@@ -829,6 +874,7 @@ class Hiprova:
         self.load_images()
         self.load_masks()
         self.apply_masks()
+        self.normalize_stains()
         self.registration()
         self.reconstruct_3d_volume()
         self.evaluate_reconstruction()
