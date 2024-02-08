@@ -1,8 +1,12 @@
 import argparse
 import pathlib
 import tqdm
+import numpy as np
+import subprocess
+import shutil
 from valis import registration, slide_io, affine_optimizer, feature_detectors
 from pathlib import Path
+from valis.micro_rigid_registrar import MicroRigidRegistrar # For high resolution rigid registration
 
 
 def collect_arguments():
@@ -66,27 +70,56 @@ class Registration:
 
         assert datadir.exists(), f"datadir {datadir} does not exist"
 
+        print(f"\nRegistering case {self.case}")
+
         return
 
+
+    def copy_to_local(self):
+        """
+        Copy the slides to the Docker container.
+        """
+
+        print(f" - copying slides to local")
+
+        # Copy slides locally
+        self.local_data_dir = Path(f"/tmp/valis/input/{self.datadir.name}")
+        self.local_data_dir.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.call(f"cp -r {self.datadir} {self.local_data_dir}", shell=True)
+
+        self.local_save_dir = Path(f"/tmp/valis/output/{self.datadir.name}")
+        self.local_save_dir.mkdir(parents=True, exist_ok=True)
+
+        return
 
     def register(self):
         """
         Method to register slides using Valis.
         """
 
+        print(f" - performing registration")
+
         # Perform rigid + non-rigid registration
         registrar = registration.Valis(
-            self.datadir,
-            self.savedir,
-            imgs_ordered=True,
+            str(self.local_data_dir),
+            str(self.local_save_dir),
+            imgs_ordered=True
         )
         rigid_registrar, non_rigid_registrar, error_df = registrar.register()
 
         # Optional micro registration
         if self.perform_micro:
-            registrar.register_micro(
-                max_non_rigid_registration_dim_px=2000,
-                align_to_reference=False
+            # Calculate what `max_non_rigid_registration_dim_px` needs to be to do non-rigid registration on an image that is 25% full resolution.
+            micro_reg_fraction = 0.25
+
+            img_dims = np.array([slide_obj.slide_dimensions_wh[0] for slide_obj in registrar.slide_dict.values()])
+            min_max_size = np.min([np.max(d) for d in img_dims])
+            img_areas = [np.multiply(*d) for d in img_dims]
+            max_img_w, max_img_h = tuple(img_dims[np.argmax(img_areas)])
+            micro_reg_size = np.floor(min_max_size*micro_reg_fraction).astype(int)
+
+            micro_reg, micro_error = registrar.register_micro(
+                max_non_rigid_registration_dim_px=micro_reg_size,
             )
 
         # Save results
@@ -128,6 +161,22 @@ class Registration:
                     pyramid=True
                 )
 
+        registration.kill_jvm()
+
+        return
+
+    def copy_to_remote(self):
+        """
+        Copy the results to the remote directory
+        """
+
+        print(f" - copying slides to remote")
+
+        # Copy slides locally
+        subprocess.call(f"cp -r {self.local_save_dir} {self.savedir}", shell=True)
+        shutil.rmtree(self.local_data_dir)
+        shutil.rmtree(self.local_save_dir)
+
         return
 
 
@@ -139,20 +188,21 @@ def main():
     # Get all cases that have not been registered yet
     datadir, savedir, micro, fullres = collect_arguments()
     cases = sorted(list(datadir.iterdir()))
-    cases = [i for i in cases if not savedir.joinpath(i.name).is_dir()]
 
-    print(f"Found {len(cases)} patients to register")
+    print(f"\nFound {len(cases)} patients to register")
 
     # Run registration
     for case in cases:
         reg = Registration(
             datadir=case,
-            savedir=savedir,
+            savedir=savedir.joinpath(case.name),
             micro=micro,
             fullres=fullres
         )
+        reg.copy_to_local()
         reg.register()
         reg.convert_ometiff()
+        reg.copy_to_remote()
 
     return
 
