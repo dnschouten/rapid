@@ -6,7 +6,7 @@ import subprocess
 import shutil
 from valis import registration, slide_io, affine_optimizer, feature_detectors
 from pathlib import Path
-from valis.micro_rigid_registrar import MicroRigidRegistrar # For high resolution rigid registration
+from valis.micro_rigid_registrar import MicroRigidRegistrar
 
 
 def collect_arguments():
@@ -38,7 +38,7 @@ def collect_arguments():
     )
     parser.add_argument(
         "--fullres",
-        default=True,
+        default=False,
         action=argparse.BooleanOptionalAction,
         help="Whether to save fullres results",
     )
@@ -185,7 +185,7 @@ def main():
     Run registration
     """
 
-    # Get all cases that have not been registered yet
+    # Get all cases
     datadir, savedir, micro, fullres = collect_arguments()
     cases = sorted(list(datadir.iterdir()))
 
