@@ -18,23 +18,27 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
     Function to apply RANSAC to filter plausible matches for affine transform.
     """
 
+    min_matches = 10
+    inliers = np.array([False] * len(moving_points))
+    res_thres = int(image.shape[0] * ransac_thres)
+
     # Apply ransac to further filter plausible matches
-    if len(moving_points) > 10:
-        res_thres = int(image.shape[0] * ransac_thres)
-        min_samples = np.max([int(len(ref_points)/4), 10])
+    if len(moving_points) > min_matches:
 
         _, inliers = ransac(
             (moving_points, ref_points),
             EuclideanTransform, 
-            min_samples=min_samples, 
+            min_samples=min_matches,
             residual_threshold=res_thres,
             max_trials=1000
         )
-    else:
-        inliers = None
+
+        # Case where convergence fails
+        if not isinstance(inliers, np.ndarray):
+            inliers = np.array([False] * len(moving_points))
 
     # Filter matches based on RANSAC if there are enough inliers
-    if isinstance(inliers, np.ndarray) and np.sum(inliers) > min_samples:
+    if isinstance(inliers, np.ndarray) and np.sum(inliers) > min_matches:
         ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
         moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
 
@@ -49,7 +53,9 @@ def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray,
     if len(moving_points) > 0:
         # Filter matches based on RANSAC
         if ransac:
-            ref_points, moving_points, _ = apply_affine_ransac(moving_points, ref_points, image, ransac_thres)
+            ref_points, moving_points, inliers = apply_affine_ransac(moving_points, ref_points, image, ransac_thres)
+        else:
+            inliers = np.array([True] * len(moving_points))
 
         # Estimate limited affine transform with only rotation and translation
         matrix = transform.estimate_transform(
@@ -61,8 +67,9 @@ def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray,
     # Return identity matrix if no keypoints are found
     else:
         matrix = transform.EuclideanTransform(rotation = 0, translation = 0)
-
-    return matrix
+        inliers = []
+    
+    return matrix, np.sum(inliers)
 
 
 def apply_affine_transform(image: np.ndarray, mask: np.ndarray, tform: np.ndarray) -> tuple([np.ndarray, Any]):

@@ -100,7 +100,7 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
 
     # Compute ransac matches to visualize the effect of RANSAC
     if tform == "affine":
-        ref_points_ransac, moving_points_ransac, _ = apply_affine_ransac(
+        ref_points_ransac, moving_points_ransac, inliers = apply_affine_ransac(
             moving_points = moving_points,
             ref_points = ref_points,
             image = moving_image,
@@ -115,7 +115,11 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
 
     # Define matches and keypoints according to opencv standards
     matches = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i in range(len(ref_points))]
-    ransac_matches = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i in range(len(ref_points_ransac))]
+    
+    if len(moving_points) == len(moving_points_ransac):
+        ransac_matches = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i, j in enumerate(inliers) if j]
+    else:
+        ransac_matches = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i in range(len(ref_points_ransac))]
     
     ref_points = [cv2.KeyPoint(x=pt[0], y=pt[1], size=1) for pt in ref_points]
     moving_points = [cv2.KeyPoint(x=pt[0], y=pt[1], size=1) for pt in moving_points]
