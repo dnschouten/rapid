@@ -307,7 +307,7 @@ class Hiprova:
         plot_stain_normalization(
             images = self.images,
             normalized_images = normalized_images,
-            savepath = self.local_save_dir.joinpath("stain_normalization.png")
+            savepath = self.local_save_dir.joinpath("02_stain_normalization.png")
         )
 
         self.images = copy.copy(normalized_images)
@@ -495,6 +495,7 @@ class Hiprova:
                     ref_points = ref_points,
                     moving_points = moving_points,
                     tform = "affine",
+                    ransac_thres = self.ransac_thres_affine,
                     savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_affine_{mov}_to_{ref}_rot_{rot}.png")
                 )
 
@@ -600,6 +601,7 @@ class Hiprova:
                 ref_points = ref_points,
                 moving_points = moving_points,
                 tform = "deformable",
+                ransac_thres = self.ransac_thres_affine,
                 savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_deformable_{mov}_to_{ref}.png")
             )
 
