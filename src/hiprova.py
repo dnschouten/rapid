@@ -67,6 +67,19 @@ class Hiprova:
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Initialize the keypoint detector and matcher to prevent repeating this dozen of times
+        if self.detector_name == "superpoint":
+            self.detector = SuperPoint(max_num_keypoints=None).eval().cuda()
+            self.matcher = LightGlue(features=self.detector_name).eval().cuda() 
+        elif self.detector_name == "disk":
+            self.detector = DISK(max_num_keypoints=None).eval().cuda()
+            self.matcher = LightGlue(features=self.detector_name).eval().cuda() 
+        elif self.detector_name == "dalf":
+            self.detector = DALF(dev=self.device)
+            self.matcher = cv2.BFMatcher(crossCheck = True)
+
+        # Set some RANSAC parameters
         self.ransac_thres_affine = self.config.ransac_thresholds[self.detector_name]
         self.ransac_thres_deformable = self.ransac_thres_affine / 2
 
@@ -485,7 +498,9 @@ class Hiprova:
 
                 # Extract keypoints
                 ref_points, moving_points, _ = get_keypoints(
-                    detector = self.detector_name, 
+                    detector = self.detector, 
+                    matcher = self.matcher,
+                    detector_name = self.detector_name,
                     ref_image = ref_image, 
                     moving_image = moving_image
                 )
@@ -500,7 +515,7 @@ class Hiprova:
                 )
 
                 # Apply transforms
-                affine_matrix = estimate_affine_transform(
+                affine_matrix, num_matches = estimate_affine_transform(
                     moving_points = moving_points, 
                     ref_points = ref_points, 
                     image = moving_image, 
@@ -523,8 +538,8 @@ class Hiprova:
                     savepath = self.local_save_dir.joinpath("warps", f"warps_affine_{mov}_to_{ref}_rot_{rot}.png")
                 )
 
-                if len(ref_points) > best_num_matches:
-                    best_num_matches = len(ref_points)
+                if num_matches > best_num_matches:
+                    best_num_matches = num_matches
 
                     # Save final image
                     final_images[mov] = moving_image_warped.astype("uint8")
@@ -591,7 +606,9 @@ class Hiprova:
 
             # Extract keypoints
             ref_points, moving_points, _ = get_keypoints(
-                detector = self.detector_name, 
+                detector = self.detector,
+                matcher = self.matcher, 
+                detector_name = self.detector_name,
                 ref_image = ref_image, 
                 moving_image = moving_image
             )
@@ -822,7 +839,9 @@ class Hiprova:
         # Compute average registration error between keypoints of adjacent images
         self.tre = compute_tre_keypoints(
             images = self.final_images,
-            detector = self.detector_name,
+            detector = self.detector,
+            matcher = self.matcher,
+            detector_name = self.detector_name,
             level = self.keypoint_level,
             savedir = self.local_save_dir,
             spacing = self.pixel_spacing_image

@@ -2,54 +2,47 @@ import numpy as np
 import torch
 import cv2
 import kornia as K
+import time
 from typing import List, Any
 from lightglue import LightGlue, SuperPoint, DISK
 from lightglue.utils import rbd
 from modules.models.DALF import DALF_extractor as DALF
 
 
-def get_keypoints(detector: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Wrapped function to get either LightGlue or DALF keypoints
     """
 
-    if detector == "superpoint":
-        points_ref, points_moving, scores = get_lightglue_keypoints(ref_image, moving_image, detector)
-    elif detector == "disk":
-        points_ref, points_moving, scores = get_lightglue_keypoints(ref_image, moving_image, detector)
-    elif detector == "dalf":
-        points_ref, points_moving = get_dalf_keypoints(ref_image, moving_image)
+    if detector_name in ["superpoint", "disk"]:
+        points_ref, points_moving, scores = get_lightglue_keypoints(ref_image, moving_image, detector, matcher)
+    elif detector_name == "dalf":
+        points_ref, points_moving = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
 
     return points_ref, points_moving, scores
 
 
-def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: str) -> tuple[np.ndarray, np.ndarray]:
+def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
     """
     Function to get matching keypoints with LightGlue
     """
-
-    # Initialize lightglue detector and matcher
-    if detector == "superpoint":
-        lightglue_detector = SuperPoint(max_num_keypoints=None).eval().cuda()  
-    elif detector == "disk":
-        lightglue_detector = DISK(max_num_keypoints=None).eval().cuda()
-    lightglue_matcher = LightGlue(features=detector).eval().cuda() 
 
     # Convert images to tensor
     ref_tensor = torch.tensor(ref_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
     moving_tensor = torch.tensor(moving_image.transpose((2, 0, 1)) / 255., dtype=torch.float).cuda()
 
-    # Extract features
-    ref_features = lightglue_detector.extract(ref_tensor)
-    moving_features = lightglue_detector.extract(moving_tensor)
+    # Extract features and match
+    with torch.inference_mode():
+        ref_features = detector.extract(ref_tensor)
+        moving_features = detector.extract(moving_tensor)
+        matches01 = matcher({'image0': ref_features, 'image1': moving_features})
 
-    # Find matches with features from reference image
-    matches01 = lightglue_matcher({'image0': ref_features, 'image1': moving_features})
-    ref_features2, moving_features, matches01 = [rbd(x) for x in [ref_features, moving_features, matches01]] 
+    # Convert
+    ref_features, moving_features, matches01 = [rbd(x) for x in [ref_features, moving_features, matches01]] 
     matches = matches01['matches']
 
     # Get matching keypoints
-    points_ref = np.float32([i.astype("int") for i in ref_features2['keypoints'][matches[..., 0]].cpu().numpy()])
+    points_ref = np.float32([i.astype("int") for i in ref_features['keypoints'][matches[..., 0]].cpu().numpy()])
     points_moving = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
 
     return points_ref, points_moving, matches01["scores"].detach().cpu().numpy()
@@ -84,20 +77,16 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray) -> tupl
     return ref_points, moving_points
 
 
-def get_dalf_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, device: Any) -> tuple[np.ndarray, np.ndarray]:
+def get_dalf_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
     """
     Function to get matching keypoints with DALF
     """
 
-    # Initialize DALF detector and matcher
-    dalf_detector = DALF(dev=device)
-
     # Extract features
-    points_ref, desc_ref = dalf_detector.detectAndCompute(ref_image)
-    points_moving, desc_moving = dalf_detector.detectAndCompute(moving_image)
+    points_ref, desc_ref = detector.detectAndCompute(ref_image)
+    points_moving, desc_moving = detector.detectAndCompute(moving_image)
     
     # Match features
-    matcher = cv2.BFMatcher(crossCheck = True)
     matches = matcher.match(desc_ref, desc_moving)
 
     # Get matching keypoints
