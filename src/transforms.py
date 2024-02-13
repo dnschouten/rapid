@@ -13,7 +13,7 @@ from modules.tps import pytorch as tps_pth
 from modules.tps import numpy as tps_np
 
 
-def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac_thres: float = 0.05) -> tuple([np.ndarray, np.ndarray]):
+def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac_thres: float) -> tuple([np.ndarray, np.ndarray, Any]):
     """
     Function to apply RANSAC to filter plausible matches for affine transform.
     """
@@ -21,10 +21,12 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
     # Apply ransac to further filter plausible matches
     if len(moving_points) > 10:
         res_thres = int(image.shape[0] * ransac_thres)
+        min_samples = np.max([int(len(ref_points)/4), 10])
+
         _, inliers = ransac(
             (moving_points, ref_points),
             EuclideanTransform, 
-            min_samples=int(len(ref_points)/4), 
+            min_samples=min_samples, 
             residual_threshold=res_thres,
             max_trials=1000
         )
@@ -32,14 +34,14 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
         inliers = None
 
     # Filter matches based on RANSAC if there are enough inliers
-    if isinstance(inliers, np.ndarray) and np.sum(inliers) > 10:
+    if isinstance(inliers, np.ndarray) and np.sum(inliers) > min_samples:
         ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
         moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
 
-    return ref_points, moving_points
+    return ref_points, moving_points, inliers
 
 
-def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac: bool, ransac_thres: float = 0.05) -> tuple([np.ndarray, List]):
+def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac: bool, ransac_thres: float) -> tuple([np.ndarray, List]):
     """
     Function to estimate an affine transform between two sets of points.
     """
