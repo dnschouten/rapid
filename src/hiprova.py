@@ -52,9 +52,8 @@ class Hiprova:
         assert len(self.image_paths) > self.config.min_images_for_reconstruction, "Need at least four images to perform a reasonable reconstruction."
 
         # Create directories
-        self.local_save_dir.joinpath("keypoints").mkdir(parents=True, exist_ok=True)
-        self.local_save_dir.joinpath("warps").mkdir(parents=True, exist_ok=True)
-        self.local_save_dir.joinpath("evaluation").mkdir(parents=True, exist_ok=True)
+        for dir in ["keypoints", "warps", "evaluation", "debug"]:
+            self.local_save_dir.joinpath(dir).mkdir(parents=True, exist_ok=True)
 
         # Set level at which to load the image
         self.keypoint_level = self.config.keypoint_level
@@ -334,9 +333,6 @@ class Hiprova:
         """
 
         print(f" - performing prealignment")
-        self.rotations = []
-        self.centerpoints = []
-        self.axes = []
         self.ellipses = []
 
         # Find ellipse for all images
@@ -348,12 +344,6 @@ class Hiprova:
 
             # Fit ellipse based on contour 
             ellipse = cv2.fitEllipse(contour)
-            center, axis, rotation = ellipse
-
-            # Correct rotation for opencv/mpl conventions
-            self.rotations.append(rotation)
-            self.centerpoints.append(center)
-            self.axes.append(axis)
             self.ellipses.append(ellipse)
 
         # Find best ref image based on the most elongated ellipse
@@ -365,12 +355,12 @@ class Hiprova:
 
         # Determine the dorsal side of the prostate 
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        dorsal_rotation = find_dorsal_rotation(
+        self.dorsal_rotation = find_dorsal_rotation(
             mask = self.masks[self.ref_idx], 
             ellipse = self.ellipses[self.ref_idx],
             center = self.common_center,
+            savepath = self.local_save_dir.joinpath("debug", "dorsal_rotation.png")
         )
-        self.rotations = [i + dorsal_rotation for i in self.rotations]
 
         # Plot resulting ellipse
         plot_ellipses(
@@ -401,6 +391,7 @@ class Hiprova:
             center, axis, rotation = ellipse
             if axis[1] > axis[0]:
                 rotation += 90
+            rotation += self.dorsal_rotation
 
             # Adjust rotation 
             rotation_matrix = cv2.getRotationMatrix2D(tuple(center), rotation, 1)

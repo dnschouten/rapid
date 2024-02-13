@@ -15,7 +15,7 @@ from radiomics import shape
 from transforms import apply_affine_transform
 
 
-def find_dorsal_rotation(mask: np.ndarray, ellipse: Any, center: np.ndarray) -> int:
+def find_dorsal_rotation(mask: np.ndarray, ellipse: Any, center: np.ndarray, savepath: pathlib.Path) -> int:
     """
     Function to find the flat dorsal side of the prostate by computing
     the smallest bounding box around the prostate and then checking the 
@@ -58,16 +58,15 @@ def find_dorsal_rotation(mask: np.ndarray, ellipse: Any, center: np.ndarray) -> 
     rotation = 180 if lower_corner_dist > upper_corner_dist else 0
     colours = ["g", "r"] if rotation == 180 else ["r", "g"]
 
-    """
     # Sanity check plot
     plt.figure()
     plt.imshow(mask, cmap="gray")
     plt.plot(contour[:, 0], contour[:, 1], "b")
     plt.scatter(upper_bbox_corners[:, 0], upper_bbox_corners[:, 1], c=colours[0])
     plt.scatter(lower_bbox_corners[:, 0], lower_bbox_corners[:, 1], c=colours[1])
+    plt.title(f"Rotate {rotation} degrees.")
     plt.savefig(savepath)
     plt.close()
-    """
     
     return rotation
 
