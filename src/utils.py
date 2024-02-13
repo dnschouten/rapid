@@ -2,12 +2,74 @@ import cv2
 import numpy as np
 import torch
 import SimpleITK as sitk
+import pathlib
 
-from typing import Tuple, List
+from matplotlib import pyplot as plt
+from typing import Tuple, List, Any
 from scipy.interpolate import interpn, interp1d
-from torchvision.transforms import ToTensor, ToPILImage
 from scipy.ndimage import zoom
+from scipy.spatial.distance import cdist
+from torchvision.transforms import ToTensor, ToPILImage
 from radiomics import shape
+
+from transforms import apply_affine_transform
+
+
+def find_dorsal_rotation(mask: np.ndarray, ellipse: Any, center: np.ndarray) -> int:
+    """
+    Function to find the flat dorsal side of the prostate by computing
+    the smallest bounding box around the prostate and then checking the 
+    distance from bounding box to the prostate contour. The two box points
+    with the smallest distance to the contour are then considered
+    the dorsal side.
+
+    Returns orientation needed to rotate the prostate on dorsal side.
+    """
+
+    # Find regular rotation based on ellipse
+    center, axis, rotation = ellipse
+    if axis[1] > axis[0]:
+        rotation += 90
+
+    # Apply rotation 
+    rotation_matrix = cv2.getRotationMatrix2D(tuple(center), rotation, 1)
+    _, mask = apply_affine_transform(
+        image = np.zeros((mask.shape[0], mask.shape[1], 3)),
+        tform = rotation_matrix,
+        mask = mask,
+    )
+
+    # Find contour
+    contour, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contour = np.squeeze(max(contour, key=cv2.contourArea))
+
+    # Find bbox corners
+    bbox = cv2.minAreaRect(contour)
+    bbox_corners = cv2.boxPoints(bbox)
+
+    upper_bbox_corners = bbox_corners[bbox_corners[:, 1] < np.mean(bbox_corners[:, 1])]
+    lower_bbox_corners = bbox_corners[bbox_corners[:, 1] > np.mean(bbox_corners[:, 1])]
+    assert upper_bbox_corners.shape == lower_bbox_corners.shape, "Upper and lower bbox corners must have the same shape."
+
+    # Compute distance from bbox corners to contour
+    upper_corner_dist = np.min(np.min(cdist(upper_bbox_corners, contour), axis=-1))
+    lower_corner_dist = np.min(np.min(cdist(lower_bbox_corners, contour), axis=-1))
+
+    rotation = 180 if lower_corner_dist > upper_corner_dist else 0
+    colours = ["g", "r"] if rotation == 180 else ["r", "g"]
+
+    """
+    # Sanity check plot
+    plt.figure()
+    plt.imshow(mask, cmap="gray")
+    plt.plot(contour[:, 0], contour[:, 1], "b")
+    plt.scatter(upper_bbox_corners[:, 0], upper_bbox_corners[:, 1], c=colours[0])
+    plt.scatter(lower_bbox_corners[:, 0], lower_bbox_corners[:, 1], c=colours[1])
+    plt.savefig(savepath)
+    plt.close()
+    """
+    
+    return rotation
 
 
 def compute_line_intersection(line1: np.ndarray, line2: np.ndarray) -> Tuple[float, float]:

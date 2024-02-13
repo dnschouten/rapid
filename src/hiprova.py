@@ -363,6 +363,15 @@ class Hiprova:
         # Find common centerpoint of all ellipses to orient towards
         self.common_center = np.mean([i[0] for i in self.ellipses], axis=0).astype("int")
 
+        # Determine the dorsal side of the prostate 
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        dorsal_rotation = find_dorsal_rotation(
+            mask = self.masks[self.ref_idx], 
+            ellipse = self.ellipses[self.ref_idx],
+            center = self.common_center,
+        )
+        self.rotations = [i + dorsal_rotation for i in self.rotations]
+
         # Plot resulting ellipse
         plot_ellipses(
             images=self.images, 
@@ -719,6 +728,7 @@ class Hiprova:
         self.final_masks = masks
         self.final_images_fullres = fullres_images
         self.final_masks_fullres = fullres_masks
+        
 
         return
 
