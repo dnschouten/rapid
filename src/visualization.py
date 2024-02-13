@@ -51,7 +51,7 @@ def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], ref_idx: int,
         else:
             ax.set_title(f"moving")
 
-    plt.savefig(save_dir.joinpath(f"02_ellipses.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(save_dir.joinpath(f"03_ellipses.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
     return
@@ -62,7 +62,7 @@ def plot_stain_normalization(images: List[np.ndarray], normalized_images: List[n
     Function to plot the results of the stain normalization procedure.
     """
 
-    plt.figure(figsize=(10, 5))
+    plt.figure(figsize=(len(images), 4))
     plt.suptitle("Macenko stain normalization effect")
     for c, (image, normalized_image) in enumerate(zip(images, normalized_images), 1):
         plt.subplot(2, len(images), c)
@@ -72,6 +72,7 @@ def plot_stain_normalization(images: List[np.ndarray], normalized_images: List[n
         plt.imshow(normalized_image)
         plt.axis("off")
     plt.savefig(savepath, dpi=300, bbox_inches="tight")
+    plt.close()
 
     return
 
@@ -86,23 +87,24 @@ def plot_prealignment(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
         plt.subplot(1, len(images), c)
         plt.imshow(image)
         plt.axis("off")
-    plt.savefig(save_dir.joinpath("03_prealignment.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(save_dir.joinpath("04_prealignment.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
     return
 
 
-def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, tform: str, savepath: pathlib.Path) -> None:
+def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, tform: str, ransac_thres: float, savepath: pathlib.Path) -> None:
     """
     Function to plot the keypoint pairs on two images.
     """
 
     # Compute ransac matches to visualize the effect of RANSAC
     if tform == "affine":
-        ref_points_ransac, moving_points_ransac = apply_affine_ransac(
+        ref_points_ransac, moving_points_ransac, _ = apply_affine_ransac(
             moving_points = moving_points,
             ref_points = ref_points,
-            image = moving_image
+            image = moving_image,
+            ransac_thres = ransac_thres
         )
     elif tform == "deformable":
         ref_points_ransac, moving_points_ransac = apply_deformable_ransac(
@@ -166,8 +168,13 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
     """
 
     # Get contours for visualization purposes
-    cnt_moving, _ = cv2.findContours(moving_mask_warped, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-    cnt_moving = np.squeeze(max(cnt_moving, key=cv2.contourArea))
+    if len(np.unique(moving_mask_warped)) > 1:
+        cnt_moving, _ = cv2.findContours(moving_mask_warped, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        cnt_moving = np.squeeze(max(cnt_moving, key=cv2.contourArea))
+    else:
+        moving_mask_warped[0, 0] = 1
+        cnt_moving = np.zeros((2, 2))
+
     cnt_ref, _ = cv2.findContours(ref_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     cnt_ref = np.squeeze(max(cnt_ref, key=cv2.contourArea))
 
@@ -346,6 +353,6 @@ def plot_3d_volume(volume: np.ndarray, savepath: pathlib.Path) -> None:
     )
 
     fig.write_image(savepath, engine="kaleido")
-    fig.show()
+    # fig.show()
 
     return
