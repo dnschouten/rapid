@@ -11,13 +11,15 @@ from modules.models.DALF import DALF_extractor as DALF
 
 def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Wrapped function to get either LightGlue or DALF keypoints
+    Wrapped function to get keypoints from any of the supported detectors.
     """
 
     if detector_name in ["superpoint", "disk"]:
         points_ref, points_moving, scores = get_lightglue_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "dalf":
         points_ref, points_moving = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
+    elif detector_name == "loftr":
+        points_ref, points_moving, scores = get_loftr_keypoints(ref_image, moving_image, matcher)
 
     return points_ref, points_moving, scores
 
@@ -48,7 +50,7 @@ def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, det
     return points_ref, points_moving, matches01["scores"].detach().cpu().numpy()
 
 
-def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
     """
     First try with the LoFTR keypoint detector and matcher.
     """
@@ -62,19 +64,19 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray) -> tupl
     moving_tensor = K.image_to_tensor(moving_image, None).float() / 255.0
 
     # Rescale to fit LoFTR architecture
-    ref_tensor = K.resize(ref_tensor, (480, 640), antialias=True).cuda()
-    moving_tensor = K.resize(moving_tensor, (480, 640), antialias=True).cuda()
+    ref_tensor = K.geometry.transform.resize(ref_tensor, (480, 480), antialias=True).cuda()
+    moving_tensor = K.geometry.transform.resize(moving_tensor, (480, 480), antialias=True).cuda()
 
     # Get matcher and match
-    matcher = K.feature.LoFTR(pretrained="indoor_new").eval().cuda()
     input = {"image0": ref_tensor, "image1": moving_tensor}
     with torch.no_grad():
         matches = matcher(input)
 
     ref_points = matches["keypoints0"].cpu().numpy()
     moving_points = matches["keypoints1"].cpu().numpy()
+    scores = matches["confidence"].cpu().numpy()
 
-    return ref_points, moving_points
+    return ref_points, moving_points, scores
 
 
 def get_dalf_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
