@@ -55,6 +55,8 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
     First try with the LoFTR keypoint detector and matcher.
     """
 
+    loftr_size = 480
+
     # Convert to grayscale
     ref_image = cv2.cvtColor(ref_image, cv2.COLOR_RGB2GRAY)
     moving_image = cv2.cvtColor(moving_image, cv2.COLOR_RGB2GRAY)
@@ -64,8 +66,8 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
     moving_tensor = K.image_to_tensor(moving_image, None).float() / 255.0
 
     # Rescale to fit LoFTR architecture
-    ref_tensor = K.geometry.transform.resize(ref_tensor, (480, 480), antialias=True).cuda()
-    moving_tensor = K.geometry.transform.resize(moving_tensor, (480, 480), antialias=True).cuda()
+    ref_tensor = K.geometry.transform.resize(ref_tensor, (loftr_size, loftr_size), antialias=True).cuda()
+    moving_tensor = K.geometry.transform.resize(moving_tensor, (loftr_size, loftr_size), antialias=True).cuda()
 
     # Get matcher and match
     input = {"image0": ref_tensor, "image1": moving_tensor}
@@ -75,6 +77,10 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
     ref_points = matches["keypoints0"].cpu().numpy()
     moving_points = matches["keypoints1"].cpu().numpy()
     scores = matches["confidence"].cpu().numpy()
+
+    # Rescale to original size
+    ref_points = ref_points * (ref_image.shape[0] / loftr_size)
+    moving_points = moving_points * (moving_image.shape[0] / loftr_size)
 
     return ref_points, moving_points, scores
 
