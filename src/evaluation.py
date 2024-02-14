@@ -3,7 +3,7 @@ import SimpleITK as sitk
 import pathlib
 import matplotlib.pyplot as plt
 from radiomics import shape
-from typing import List
+from typing import List, Any
 from scipy.ndimage import zoom
 
 from keypoints import get_keypoints
@@ -32,10 +32,10 @@ def compute_sphericity(mask: np.ndarray) -> float:
     shape_features.execute()
     sphericity = float(shape_features.featureValues['Sphericity'])
 
-    return sphericity
+    return np.round(sphericity, 3)
 
 
-def compute_dice(mask1: np.ndarray, mask2: np.ndarray) -> float:
+def compute_dice(mask1: np.ndarray, mask2: np.ndarray, normalized: bool = False) -> float:
     """
     Function to compute the dice score between two 2D masks.
     """
@@ -54,6 +54,13 @@ def compute_dice(mask1: np.ndarray, mask2: np.ndarray) -> float:
     intersection = np.sum(mask1 * mask2)
     dice = (2. * intersection) / (np.sum(mask1) + np.sum(mask2) + eps)
 
+    # Normalize by max achievable dice
+    if normalized:
+        smallest_mask = np.min([np.sum(mask1), np.sum(mask2)])
+        biggest_mask = np.max([np.sum(mask1), np.sum(mask2)])
+        max_possible_dice = (2. * smallest_mask) / (smallest_mask + biggest_mask + eps)
+        dice = dice / max_possible_dice
+
     return dice
 
 
@@ -66,12 +73,12 @@ def compute_reconstruction_dice(masks: List) -> float:
     dice_scores = []
 
     for i in range(len(masks)-1):
-        dice_scores.append(compute_dice(masks[i], masks[i+1]))
+        dice_scores.append(compute_dice(masks[i], masks[i+1]), normalized=False)
 
-    return np.mean(dice_scores)
+    return np.round(np.mean(dice_scores), 3)
 
 
-def compute_tre_keypoints(images: List, detector: str, level: int, savedir: pathlib.Path, spacing: float) -> float:
+def compute_tre_keypoints(images: List, detector: Any, matcher: Any, detector_name: str, level: int, savedir: pathlib.Path, spacing: float) -> float:
     """
     Function to compute the target registration error between two sets of keypoints
     """
@@ -86,6 +93,8 @@ def compute_tre_keypoints(images: List, detector: str, level: int, savedir: path
         # Get keypoints
         ref_points, moving_points, scores = get_keypoints(
             detector = detector, 
+            matcher = matcher,
+            detector_name = detector_name,
             ref_image = images[c], 
             moving_image = images[c+1]
         )
@@ -95,7 +104,7 @@ def compute_tre_keypoints(images: List, detector: str, level: int, savedir: path
         moving_points = moving_points[scores > np.median(scores)]
 
         # Compute average TRE
-        tre = np.mean(np.linalg.norm(ref_points - moving_points, axis=-1))
+        tre = np.median(np.linalg.norm(ref_points - moving_points, axis=-1))
 
         # Scale w.r.t. pixel spacing
         level_spacing = spacing * 2**level
@@ -113,6 +122,6 @@ def compute_tre_keypoints(images: List, detector: str, level: int, savedir: path
             savepath = savepath
         )
 
-    return np.mean(tre_per_pair)
+    return int(np.mean(tre_per_pair))
 
 
