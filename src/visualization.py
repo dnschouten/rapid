@@ -92,6 +92,22 @@ def plot_prealignment(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
 
     return
 
+def plot_align_center(images: List[np.ndarray], center: np.ndarray, savepath: pathlib.Path) -> None:
+    """
+    Function to plot the images after centering.
+    """
+
+    plt.figure(figsize=(10, 5))
+    for c, image in enumerate(images, 1):
+        plt.subplot(1, len(images), c)
+        plt.imshow(image)
+        plt.scatter(center[0], center[1], c="r")
+        plt.axis("off")
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return
+
 
 def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, tform: str, ransac_thres: float, savepath: pathlib.Path) -> None:
     """

@@ -30,7 +30,7 @@ def collect_arguments():
         required=True,
         type=str,
         default="affine",
-        help="Mode to run hiprova, options are 'prealignment', 'affine', 'deformable' or 'valis'."
+        help="Mode to run hiprova, options are 'prealignment', 'affine', 'deformable', 'valis', 'baseline'."
     )
     parser.add_argument(
         "--experiment",
@@ -48,7 +48,7 @@ def collect_arguments():
 
     assert data_dir.is_dir(), "Data directory does not exist."
     save_dir.mkdir(parents=True, exist_ok=True)
-    assert mode in ["prealignment", "affine", "deformable", "valis"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable', 'valis']."
+    assert mode in ["prealignment", "affine", "deformable", "valis", "baseline"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
 
     return data_dir, save_dir, mode, experiment
 

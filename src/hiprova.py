@@ -326,6 +326,69 @@ class Hiprova:
 
         return
 
+    def align_center(self, images: List[np.ndarray], masks: List[np.ndarray], fullres_images: List[pyvips.Image], fullres_masks: List[pyvips.Image]) -> None:
+        """
+        Baseline method of just aligning all images with respect to their center point.
+        """
+
+        center_points = []
+
+        # Find contour for all masks
+        for mask in masks:
+            
+            # Get contour from mask
+            contour, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+            contour = np.squeeze(max(contour, key=cv2.contourArea))
+
+            # Get center of contour
+            M = cv2.moments(contour)
+            center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+            center_points.append(center)
+        
+        common_center = np.mean(center_points, axis=0).astype("int")
+
+        # Apply translation to all images
+        final_images = []
+        final_masks = []
+        final_images_fullres = []
+        final_masks_fullres = []
+
+        for image, mask, image_fullres, mask_fullres, center in zip(images, masks, fullres_images, fullres_masks, center_points):
+
+            # Apply translation
+            translation = common_center - center
+            translation_matrix = np.float32([[1, 0, translation[0]], [0, 1, translation[1]]])
+            image, mask = apply_affine_transform(
+                image = image,
+                tform = translation_matrix,
+                mask = mask,
+            )
+
+            final_images.append(image)
+            final_masks.append(mask)
+
+            # Apply translation in full resolution
+            if self.full_resolution:
+                image_fullres, mask_fullres = apply_affine_transform_fullres(
+                    image = image_fullres,
+                    mask = mask_fullres,
+                    rotation = 0,
+                    translation = translation,
+                    center = list(common_center),
+                    scaling = self.fullres_scaling
+                )
+
+                final_images_fullres.append(image_fullres)
+                final_masks_fullres.append(mask_fullres)
+
+        plot_align_center(
+            images = final_images,
+            center = common_center,
+            savepath = self.local_save_dir.joinpath("03_align_center.png")
+        )
+
+        return final_images, final_masks, final_images_fullres, final_masks_fullres
+
     def find_rotations(self) -> None:
         """
         Method to get the rotation of the prostate based on an
@@ -678,6 +741,21 @@ class Hiprova:
             self.final_masks_fullres = self.fullres_masks
             return
 
+        if self.mode == "baseline":
+            images, masks, fullres_images, fullres_masks = self.align_center(
+                images = self.images,
+                masks = self.masks,
+                fullres_images = self.fullres_images,
+                fullres_masks = self.fullres_masks
+            )
+
+            self.final_images = images
+            self.final_masks = masks
+            self.final_images_fullres = fullres_images
+            self.final_masks_fullres = fullres_masks
+
+            return
+
         # Pre-alignment as initial step
         images, masks, fullres_images, fullres_masks = self.prealignment(
             images = self.images,
@@ -720,7 +798,6 @@ class Hiprova:
         self.final_images_fullres = fullres_images
         self.final_masks_fullres = fullres_masks
         
-
         return
 
     def reconstruct_3d_volume(self) -> None:
