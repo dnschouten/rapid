@@ -8,6 +8,7 @@ import copy
 import subprocess
 import shutil
 import torchstain
+import kornia as K
 import sys
 sys.path.append("/root/DALF_CVPR_2023")
 
@@ -37,7 +38,7 @@ class Hiprova:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        assert self.detector_name in ["dalf", "superpoint", "disk"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk']."
+        assert self.detector_name in ["dalf", "superpoint", "disk", "loftr"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk', 'loftr']."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
         if not self.local_save_dir.is_dir():
@@ -63,6 +64,7 @@ class Hiprova:
         assert self.full_resolution_level_image <= self.keypoint_level, "Full resolution level should be lower than image level."
         self.fullres_scaling = 2 ** (self.keypoint_level - self.full_resolution_level_image)
         self.deformable_scaling = 2 ** (self.deformable_level - self.keypoint_level)
+        self.normalize_dice = self.config.normalize_dice
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -77,6 +79,9 @@ class Hiprova:
         elif self.detector_name == "dalf":
             self.detector = DALF(dev=self.device)
             self.matcher = cv2.BFMatcher(crossCheck = True)
+        elif self.detector_name == "loftr":
+            self.detector = None
+            self.matcher = K.feature.LoFTR(pretrained="indoor_new").eval().cuda()
 
         # Set some RANSAC parameters
         self.ransac_thres_affine = self.config.ransac_thresholds[self.detector_name]
@@ -229,7 +234,7 @@ class Hiprova:
         self.masks = []
 
         # Get common size
-        factor = self.config.padding_ratio
+        factor = 1.2
         max_h = int(np.max([i.shape for i in self.raw_images]) * factor)
         max_w = int(np.max([i.shape for i in self.raw_images]) * factor)
 
@@ -929,7 +934,7 @@ class Hiprova:
         self.sphericity = compute_sphericity(self.final_reconstruction_3d_mask)
 
         # Compute dice score of all adjacent masks
-        self.reconstruction_dice = compute_reconstruction_dice(masks = self.final_masks)
+        self.reconstruction_dice = compute_reconstruction_dice(masks = self.final_masks, normalized = self.normalize_dice)
 
         return
 
