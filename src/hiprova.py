@@ -16,6 +16,11 @@ from pathlib import Path
 from typing import List
 from torchvision import transforms
 
+from src.ASpanFormer.aspanformer import ASpanFormer 
+from src.config.default import get_cfg_defaults
+from lightglue import LightGlue, SuperPoint, DISK
+from modules.models.DALF import DALF_extractor as DALF
+
 from visualization import *
 from utils import *
 from config import Config
@@ -82,6 +87,9 @@ class Hiprova:
         elif self.detector_name == "loftr":
             self.detector = None
             self.matcher = K.feature.LoFTR(pretrained="indoor_new").eval().cuda()
+        elif self.detector_name == "aspanformer":
+            self.detector = None
+            self.matcher = ASpanFormer(config=get_cfg_defaults())
 
         # Set some RANSAC parameters
         self.ransac_thres_affine = self.config.ransac_thresholds[self.detector_name]

@@ -2,11 +2,10 @@ import numpy as np
 import torch
 import cv2
 import kornia as K
-import time
 from typing import List, Any
-from lightglue import LightGlue, SuperPoint, DISK
 from lightglue.utils import rbd
-from modules.models.DALF import DALF_extractor as DALF
+
+import demo_utils
 
 
 def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -15,13 +14,13 @@ def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np
     """
 
     if detector_name in ["superpoint", "disk"]:
-        points_ref, points_moving, scores = get_lightglue_keypoints(ref_image, moving_image, detector, matcher)
+        ref_points, moving_points, scores = get_lightglue_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "dalf":
-        points_ref, points_moving = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
+        ref_points, moving_points = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "loftr":
-        points_ref, points_moving, scores = get_loftr_keypoints(ref_image, moving_image, matcher)
+        ref_points, moving_points, scores = get_loftr_keypoints(ref_image, moving_image, matcher)
 
-    return points_ref, points_moving, scores
+    return ref_points, moving_points, scores
 
 
 def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -44,10 +43,10 @@ def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, det
     matches = matches01['matches']
 
     # Get matching keypoints
-    points_ref = np.float32([i.astype("int") for i in ref_features['keypoints'][matches[..., 0]].cpu().numpy()])
-    points_moving = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
+    ref_points = np.float32([i.astype("int") for i in ref_features['keypoints'][matches[..., 0]].cpu().numpy()])
+    moving_points = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
 
-    return points_ref, points_moving, matches01["scores"].detach().cpu().numpy()
+    return ref_points, moving_points, matches01["scores"].detach().cpu().numpy()
 
 
 def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -91,14 +90,54 @@ def get_dalf_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector
     """
 
     # Extract features
-    points_ref, desc_ref = detector.detectAndCompute(ref_image)
-    points_moving, desc_moving = detector.detectAndCompute(moving_image)
+    ref_points, desc_ref = detector.detectAndCompute(ref_image)
+    moving_points, desc_moving = detector.detectAndCompute(moving_image)
     
     # Match features
     matches = matcher.match(desc_ref, desc_moving)
 
     # Get matching keypoints
-    points_ref = np.float32([points_ref[m.queryIdx].pt for m in matches])
-    points_moving = np.float32([points_moving[m.trainIdx].pt for m in matches])
+    ref_points = np.float32([ref_points[m.queryIdx].pt for m in matches])
+    moving_points = np.float32([moving_points[m.trainIdx].pt for m in matches])
 
-    return points_ref, points_moving
+    return ref_points, moving_points
+
+
+def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Function to get matching keypoints with ASpanformer
+    """
+
+    # Convert to grayscale
+    ref_image = cv2.cvtColor(ref_image, cv2.COLOR_RGB2GRAY)
+    moving_image = cv2.cvtColor(moving_image, cv2.COLOR_RGB2GRAY)
+
+    # Resize to fit ASpanformer architecture
+    LONG_DIM = 1024
+    factor = LONG_DIM/max(ref_image.shape[:2])
+    ref_image = cv2.resize(
+        ref_image, 
+        (int(ref_image.shape[1]*factor), int(ref_image.shape[0]*factor))
+    )
+    moving_image = cv2.resize(
+        moving_image, 
+        (int(moving_image.shape[1]*factor), int(moving_image.shape[0]*factor))
+    )
+
+    # Convert to tensor 
+    data = {
+        "image0":torch.from_numpy(ref_image/255)[None, None].cuda().float(),
+        "image1":torch.from_numpy(moving_image/255)[None, None].cuda().float()
+    }
+
+    # Extract features and match
+    with torch.no_grad():
+        matcher(data, online_resize=True)
+        ref_points = data['mkpts0_f'].cpu().numpy()
+        moving_points = data['mkpts1_f'].cpu().numpy()
+
+    # Convert keypoints back to original shape
+    ref_points = ref_points * factor
+    moving_points = moving_points * factor
+    
+    return ref_points, moving_points
