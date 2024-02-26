@@ -64,7 +64,7 @@ def compute_dice(mask1: np.ndarray, mask2: np.ndarray, normalized: bool = False)
     return dice
 
 
-def compute_reconstruction_dice(masks: List) -> float:
+def compute_reconstruction_dice(masks: List, normalized: bool = False) -> float:
     """
     Function to compute the dice score between all masks in a list.
     """
@@ -73,7 +73,7 @@ def compute_reconstruction_dice(masks: List) -> float:
     dice_scores = []
 
     for i in range(len(masks)-1):
-        dice_scores.append(compute_dice(masks[i], masks[i+1]), normalized=False)
+        dice_scores.append(compute_dice(mask1 = masks[i], mask2 = masks[i+1], normalized=normalized))
 
     return np.round(np.mean(dice_scores), 3)
 
@@ -110,6 +110,9 @@ def compute_tre_keypoints(images: List, detector: Any, matcher: Any, detector_na
         level_spacing = spacing * 2**level
         scaled_tre = tre * level_spacing
 
+        if np.isnan(scaled_tre):
+            print(f"Warning: nan value for TRE between images {c} and {c+1}, found {len(ref_points)} keypoints.")
+
         tre_per_pair.append(scaled_tre)
 
         savepath = savedir.joinpath("evaluation", f"tre_{c}_{c+1}.png")
@@ -122,6 +125,6 @@ def compute_tre_keypoints(images: List, detector: Any, matcher: Any, detector_na
             savepath = savepath
         )
 
-    return int(np.mean(tre_per_pair))
+    return int(np.nanmean(tre_per_pair))
 
 
