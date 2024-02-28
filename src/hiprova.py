@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import List
 from torchvision import transforms
 
-from src.ASpanFormer.aspanformer import ASpanFormer 
-from src.config.default import get_cfg_defaults
+# from src.ASpanFormer.aspanformer import ASpanFormer 
+# from src.config.default import get_cfg_defaults
 from lightglue import LightGlue, SuperPoint, DISK
 from modules.models.DALF import DALF_extractor as DALF
 
@@ -39,6 +39,7 @@ class Hiprova:
         self.save_dir = save_dir
         self.mode = mode
 
+        self.scramble = self.config.scramble
         self.full_resolution = self.config.full_resolution_level > 0
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
@@ -265,6 +266,14 @@ class Hiprova:
             if self.full_resolution:
                 self.apply_masks_fullres(c, h1, w1, max_h, max_w)
 
+        if self.scramble:
+            self.images, self.masks, self.fullres_images, self.fullres_masks = self.scramble_images(
+                images = self.images,
+                masks = self.masks,
+                fullres_images = self.fullres_images,
+                fullres_masks = self.fullres_masks
+            )
+
         return
 
     def apply_masks_fullres(self, c: int, h1: int, w1: int, max_h: int, max_w: int) -> None:
@@ -303,6 +312,52 @@ class Hiprova:
 
         return
 
+    def scramble_images(self, images: List, masks: List, fullres_images: List, fullres_masks: List) -> tuple([List, List, List, List]): 
+        """
+        Method to apply a random rotation + translation to the images to 
+        increase reconstruction difficulty. 
+        """
+
+        images_scrambled = []
+        masks_scrambled = []
+        fullres_images_scrambled = []
+        fullres_masks_scrambled = []
+
+        for im, mask, im_f, mask_f in zip(images, masks, fullres_images, fullres_masks):
+
+            # Get random tform matrix
+            random_rot = np.random.randint(0, 360)
+            random_trans = np.random.randint(-int(im.shape[0]*0.2), int(im.shape[0]*0.2), 2)
+            tform = cv2.getRotationMatrix2D((im.shape[1]//2, im.shape[0]//2), random_rot, 1)
+            tform[:, 2] += random_trans
+
+            # Apply to regular image and mask
+            im_scrambled, mask_scrambled = apply_affine_transform(
+                image = im,
+                tform = tform,
+                mask = mask
+            )
+            images_scrambled.append(im_scrambled)
+            masks_scrambled.append(mask_scrambled)
+
+            # Apply to full res
+            if self.full_resolution:
+                im_f_scrambled, mask_f_scrambled = apply_affine_transform_fullres(
+                    image = im_f,
+                    mask = mask_f,
+                    rotation = random_rot,
+                    translation = random_trans,
+                    center = (im_f.width//2, im_f.height//2),
+                    scaling = self.fullres_scaling
+                )
+
+                fullres_images_scrambled.append(im_f_scrambled)
+                fullres_masks_scrambled.append(mask_f_scrambled)
+
+        plot_scrambled_images(images_scrambled, self.local_save_dir)
+
+        return images_scrambled, masks_scrambled, fullres_images_scrambled, fullres_masks_scrambled
+
     def normalize_stains(self) -> None:
         """
         Method to perform stain normalization to aid in keypoint detection. 
@@ -332,7 +387,7 @@ class Hiprova:
         plot_stain_normalization(
             images = self.images,
             normalized_images = normalized_images,
-            savepath = self.local_save_dir.joinpath("02_stain_normalization.png")
+            save_dir = self.local_save_dir
         )
 
         self.images = copy.copy(normalized_images)

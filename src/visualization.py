@@ -29,10 +29,36 @@ def plot_initial_reconstruction(images: List[np.ndarray], save_dir: pathlib.Path
     return
 
 
+def plot_scrambled_images(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
+    """
+    Function to plot the scrambled images.
+    """
+
+    # Get path to save
+    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
+    idx = int(image_indices[-1]) + 1
+    savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_scrambled_images.png")
+
+    plt.figure(figsize=(10, 5))
+    for i, image in enumerate(images, 1):
+        plt.subplot(1, len(images), i)
+        plt.imshow(image)
+        plt.axis("off")
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return
+
+
 def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], ref_idx: int, save_dir: pathlib.Path) -> None:
     """
     Function to plot the fitted ellipses on the whole mounts.
     """
+
+    # Get path to save
+    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
+    idx = int(image_indices[-1]) + 1
+    savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_ellipses.png")
 
     fig, axs = plt.subplots(1, len(images), figsize=(10, 5))
     for c, (image, ellipse, ax) in enumerate(zip(images, ellipses, axs)):
@@ -51,16 +77,21 @@ def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], ref_idx: int,
         else:
             ax.set_title(f"moving")
 
-    plt.savefig(save_dir.joinpath(f"03_ellipses.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
     plt.close()
 
     return
 
 
-def plot_stain_normalization(images: List[np.ndarray], normalized_images: List[np.ndarray], savepath: pathlib.Path) -> None:
+def plot_stain_normalization(images: List[np.ndarray], normalized_images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     """
     Function to plot the results of the stain normalization procedure.
     """
+
+    # Get path to save
+    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
+    idx = int(image_indices[-1]) + 1
+    savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_stain_normalization.png")
 
     plt.figure(figsize=(len(images), 4))
     plt.suptitle("Macenko stain normalization effect")
