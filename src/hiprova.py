@@ -327,7 +327,7 @@ class Hiprova:
 
             # Get random tform matrix
             random_rot = np.random.randint(0, 360)
-            random_trans = np.random.randint(-int(im.shape[0]*0.2), int(im.shape[0]*0.2), 2)
+            random_trans = np.random.randint(-int(im.shape[0]*0.1), int(im.shape[0]*0.1), 2)
             tform = cv2.getRotationMatrix2D((im.shape[1]//2, im.shape[0]//2), random_rot, 1)
             tform[:, 2] += random_trans
 
