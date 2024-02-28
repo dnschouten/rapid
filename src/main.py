@@ -1,6 +1,7 @@
 import argparse
 import pandas as pd
 import json
+import numpy as np
 from pathlib import Path
 
 from hiprova import Hiprova
@@ -30,7 +31,7 @@ def collect_arguments():
         required=True,
         type=str,
         default="affine",
-        help="Mode to run hiprova, options are 'prealignment', 'affine', 'deformable', 'valis', 'baseline'."
+        help="Mode to run hiprova, options are ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
     )
     parser.add_argument(
         "--experiment",
@@ -49,6 +50,7 @@ def collect_arguments():
     assert data_dir.is_dir(), "Data directory does not exist."
     save_dir.mkdir(parents=True, exist_ok=True)
     assert mode in ["prealignment", "affine", "deformable", "valis", "baseline"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
+    assert not save_dir.joinpath(experiment).is_dir(), "Experiment folder already exists, did you forget to change it?"
 
     return data_dir, save_dir, mode, experiment
 
@@ -57,6 +59,8 @@ def main():
     """
     Main function.
     """
+
+    np.random.seed(42)
 
     # Get args
     data_dir, save_dir, mode, experiment = collect_arguments()
