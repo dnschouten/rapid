@@ -2,12 +2,14 @@ import cv2
 import numpy as np
 import pyvips
 import torch
+import sys 
 
 from skimage import transform
 from skimage.transform import EuclideanTransform
 from skimage.measure import ransac
 from typing import List, Any
 
+sys.path.append("/detectors/DALF_CVPR_2023")
 from modules.tps import RANSAC
 from modules.tps import pytorch as tps_pth
 from modules.tps import numpy as tps_np
@@ -93,7 +95,7 @@ def apply_affine_transform(image: np.ndarray, mask: np.ndarray, tform: np.ndarra
     return image_warped, mask_warped
 
 
-def apply_affine_transform_fullres(image: pyvips.Image, mask: pyvips.Image, rotation, translation, center, scaling) -> tuple([pyvips.Image, Any]):
+def apply_affine_transform_fullres(image: pyvips.Image, mask: pyvips.Image, rotation: float, translation: float, center: tuple, scaling: float) -> tuple([pyvips.Image, Any]):
     """
     Apply an affine transform to an image and mask.
     """
