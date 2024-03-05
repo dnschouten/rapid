@@ -256,3 +256,17 @@ def grid_to_image(image_size: Tuple, grid: torch.Tensor) -> np.ndarray:
 
     return warped_image
 
+
+def get_save_image_idx(save_dir) -> str:
+    """
+    Function to get the image index from the save directory.
+    """
+
+    # Get current image indices
+    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
+
+    # Increment by 1 and convert to string
+    idx = int(image_indices[-1]) + 1
+    idx = str(idx).zfill(2)
+
+    return idx

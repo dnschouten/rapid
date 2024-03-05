@@ -35,8 +35,7 @@ def plot_scrambled_images(images: List[np.ndarray], save_dir: pathlib.Path) -> N
     """
 
     # Get path to save
-    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
-    idx = int(image_indices[-1]) + 1
+    idx = get_save_image_idx(save_dir)
     savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_scrambled_images.png")
 
     plt.figure(figsize=(10, 5))
@@ -56,8 +55,7 @@ def plot_ellipses(images: List[np.ndarray], ellipses: List[Tuple], ref_idx: int,
     """
 
     # Get path to save
-    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
-    idx = int(image_indices[-1]) + 1
+    idx = get_save_image_idx(save_dir)
     savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_ellipses.png")
 
     fig, axs = plt.subplots(1, len(images), figsize=(10, 5))
@@ -89,8 +87,7 @@ def plot_stain_normalization(images: List[np.ndarray], normalized_images: List[n
     """
 
     # Get path to save
-    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
-    idx = int(image_indices[-1]) + 1
+    idx = get_save_image_idx(save_dir)
     savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_stain_normalization.png")
 
     plt.figure(figsize=(len(images), 4))
@@ -113,12 +110,16 @@ def plot_prealignment(images: List[np.ndarray], save_dir: pathlib.Path) -> None:
     Function to plot the images after rotation and translation adjustment.
     """
 
+    # Get path to save
+    idx = get_save_image_idx(save_dir)
+    savepath = save_dir.joinpath(f"{idx}_prealignment.png")
+
     plt.figure(figsize=(10, 5))
     for c, image in enumerate(images, 1):
         plt.subplot(1, len(images), c)
         plt.imshow(image)
         plt.axis("off")
-    plt.savefig(save_dir.joinpath("04_prealignment.png"), dpi=300, bbox_inches="tight")
+    plt.savefig(savepath, dpi=300, bbox_inches="tight")
     plt.close()
 
     return
@@ -296,8 +297,7 @@ def plot_final_reconstruction(final_images: List, save_dir: pathlib.Path, tform:
     """
 
     # Get path to save
-    image_indices = sorted([i.name.split("_")[0] for i in save_dir.glob("*.png")])
-    idx = int(image_indices[-1]) + 1
+    idx = get_save_image_idx(save_dir)
     savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_final_reconstruction_{tform}.png")
 
     plt.figure(figsize=(10, 5))
