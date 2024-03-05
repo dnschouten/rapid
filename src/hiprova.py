@@ -1028,6 +1028,13 @@ class Hiprova:
         # Compute dice score of all adjacent masks
         self.reconstruction_dice = compute_reconstruction_dice(masks = self.final_masks, normalized = self.normalize_dice)
 
+        # Compute median contour distance of all adjacent masks
+        self.contour_distance = compute_contour_distance(
+            masks = self.final_masks,
+            level = self.keypoint_level,
+            spacing = self.pixel_spacing_image
+        )
+
         return
 
     def save_results(self):

@@ -93,6 +93,7 @@ def main():
             "dice": [constructor.reconstruction_dice],
             "tre": [constructor.tre],
             "sphericity": [constructor.sphericity],
+            "median_contour_dist": [constructor.contour_distance],
             "mode": [mode],
         })
         df = pd.concat([df, new_df], ignore_index=True)

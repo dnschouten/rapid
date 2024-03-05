@@ -2,9 +2,12 @@ import numpy as np
 import SimpleITK as sitk
 import pathlib
 import matplotlib.pyplot as plt
+import cv2
 from radiomics import shape
 from typing import List, Any
 from scipy.ndimage import zoom
+from scipy.spatial.distance import directed_hausdorff, cdist
+
 
 from keypoints import get_keypoints
 
@@ -128,3 +131,57 @@ def compute_tre_keypoints(images: List, detector: Any, matcher: Any, detector_na
     return int(np.nanmean(tre_per_pair))
 
 
+def compute_reconstruction_hausdorff(masks: List, level: int, spacing: float) -> float:
+    """
+    Function to compute the Hausdorff distance between adjacent contours.
+    """
+
+    hausdorff_per_pair = []
+
+    # Compute hausdorff between all masks
+    for i in range(len(masks)-1):
+
+        # Get contours
+        contour_a, _ = cv2.findContours(masks[i], cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contour_a = np.squeeze(max(contour_a, key=cv2.contourArea))
+        contour_b, _ = cv2.findContours(masks[i+1], cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contour_b = np.squeeze(max(contour_b, key=cv2.contourArea))
+
+        # Compute hausdorff
+        hausdorff = np.max([directed_hausdorff(contour_a, contour_b)[0], directed_hausdorff(contour_a, contour_b)[0]])
+
+        # Scale w.r.t. pixel spacing
+        scale_factor = spacing * 2**level
+        scaled_hausdorff = hausdorff * scale_factor
+
+        hausdorff_per_pair.append(scaled_hausdorff)
+
+    return int(np.mean(hausdorff_per_pair))
+
+
+def compute_contour_distance(masks: List, level: int, spacing: float) -> float:
+    """
+    Function to compute the median distance between adjacent contours.
+    """
+
+    dist_per_pair = []
+
+    # Compute median contour distance between all masks
+    for i in range(len(masks)-1):
+
+        # Get contours
+        contour_a, _ = cv2.findContours(masks[i], cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contour_a = np.squeeze(max(contour_a, key=cv2.contourArea))
+        contour_b, _ = cv2.findContours(masks[i+1], cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contour_b = np.squeeze(max(contour_b, key=cv2.contourArea))
+
+        # Compute hausdorff
+        distance = np.median(np.min(cdist(contour_a, contour_b), axis=1))
+
+        # Scale w.r.t. pixel spacing
+        scale_factor = spacing * 2**level
+        scaled_distance = distance * scale_factor
+
+        dist_per_pair.append(scaled_distance)
+
+    return int(np.mean(dist_per_pair))
