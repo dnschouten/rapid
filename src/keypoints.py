@@ -5,10 +5,10 @@ import kornia as K
 from typing import List, Any
 from lightglue.utils import rbd
 
-import demo_utils
+# import demo_utils
 
 
-def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Wrapped function to get keypoints from any of the supported detectors.
     """
@@ -19,6 +19,10 @@ def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np
         ref_points, moving_points = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "loftr":
         ref_points, moving_points, scores = get_loftr_keypoints(ref_image, moving_image, matcher)
+    elif detector_name == "aspanformer":
+        ref_points, moving_points, scores = get_aspanformer_keypoints(ref_image, moving_image, matcher)
+    elif detector_name == "roma":
+        ref_points, moving_points, scores = get_roma_keypoints(ref_image, moving_image, matcher)
 
     return ref_points, moving_points, scores
 
@@ -51,7 +55,7 @@ def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, det
 
 def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
     """
-    First try with the LoFTR keypoint detector and matcher.
+    Function to get matching keypoints with the LoFTR detector and matcher.
     """
 
     loftr_size = 480
@@ -103,7 +107,7 @@ def get_dalf_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector
     return ref_points, moving_points
 
 
-def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
+def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
     """
     Function to get matching keypoints with ASpanformer
     """
@@ -139,5 +143,6 @@ def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, d
     # Convert keypoints back to original shape
     ref_points = ref_points * factor
     moving_points = moving_points * factor
-    
-    return ref_points, moving_points
+    scores = data['mconf'].cpu().numpy()
+
+    return ref_points, moving_points, scores

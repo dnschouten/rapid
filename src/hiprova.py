@@ -10,16 +10,11 @@ import shutil
 import torchstain
 import kornia as K
 import sys
-sys.path.append("/root/DALF_CVPR_2023")
+sys.path.append("/detectors")
 
 from pathlib import Path
 from typing import List
 from torchvision import transforms
-
-# from src.ASpanFormer.aspanformer import ASpanFormer 
-# from src.config.default import get_cfg_defaults
-from lightglue import LightGlue, SuperPoint, DISK
-from modules.models.DALF import DALF_extractor as DALF
 
 from visualization import *
 from utils import *
@@ -44,7 +39,7 @@ class Hiprova:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        assert self.detector_name in ["dalf", "superpoint", "disk", "loftr"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk', 'loftr']."
+        assert self.detector_name in ["dalf", "superpoint", "disk", "loftr", "aspanformer"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk', 'loftr', 'aspanformer']."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
         if not self.local_save_dir.is_dir():
@@ -56,7 +51,7 @@ class Hiprova:
         self.mask_paths = sorted([i for i in self.data_dir.iterdir() if "mask" in i.name])
 
         assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks do not match."
-        assert len(self.image_paths) > self.config.min_images_for_reconstruction, "Need at least four images to perform a reasonable reconstruction."
+        assert len(self.image_paths) > self.config.min_images_for_reconstruction, f"Need at least {self.config.min_images_for_reconstruction} images to perform a reasonable reconstruction."
 
         # Create directories
         for dir in ["keypoints", "warps", "evaluation", "debug"]:
@@ -74,23 +69,7 @@ class Hiprova:
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        # Initialize the keypoint detector and matcher to prevent repeating this dozen of times
-        if self.detector_name == "superpoint":
-            self.detector = SuperPoint(max_num_keypoints=None).eval().cuda()
-            self.matcher = LightGlue(features=self.detector_name).eval().cuda() 
-        elif self.detector_name == "disk":
-            self.detector = DISK(max_num_keypoints=None).eval().cuda()
-            self.matcher = LightGlue(features=self.detector_name).eval().cuda() 
-        elif self.detector_name == "dalf":
-            self.detector = DALF(dev=self.device)
-            self.matcher = cv2.BFMatcher(crossCheck = True)
-        elif self.detector_name == "loftr":
-            self.detector = None
-            self.matcher = K.feature.LoFTR(pretrained="indoor_new").eval().cuda()
-        elif self.detector_name == "aspanformer":
-            self.detector = None
-            self.matcher = ASpanFormer(config=get_cfg_defaults())
+        self.detector, self.matcher = self.init_detector(detector = self.detector_name)
 
         # Set some RANSAC parameters
         self.ransac_thres_affine = self.config.ransac_thresholds[self.detector_name]
@@ -101,6 +80,56 @@ class Hiprova:
 
         return
     
+    def init_detector(self, detector: str) -> None:
+        """
+        Method to initialize the matching algorithm. 
+        """
+
+        # Initialize the keypoint detector and matcher to prevent repeating this dozen of times
+        if detector == "superpoint":
+            from lightglue import LightGlue, SuperPoint
+            detector = SuperPoint(max_num_keypoints=None).eval().cuda()
+            matcher = LightGlue(features=self.detector_name).eval().cuda() 
+
+        elif detector == "disk":
+            from lightglue import LightGlue, DISK
+            detector = DISK(max_num_keypoints=None).eval().cuda()
+            matcher = LightGlue(features=self.detector_name).eval().cuda() 
+
+        elif detector == "dalf":
+            from modules.models.DALF import DALF_extractor as DALF
+            detector = DALF(dev=self.device)
+            matcher = cv2.BFMatcher(crossCheck = True)
+
+        elif detector == "loftr":
+            detector = None
+            matcher = K.feature.LoFTR(pretrained="indoor_new").eval().cuda()
+
+        elif detector == "aspanformer":
+            sys.path.append("/detectors/ml-aspanformer")
+            from src.ASpanFormer.aspanformer import ASpanFormer 
+            from src.config.default import get_cfg_defaults
+            from src.utils.misc import lower_config
+            detector = None
+            # Prepare config file
+            config = get_cfg_defaults()
+            config.merge_from_file('/detectors/ml-aspanformer/configs/aspan/outdoor/aspan_test.py')
+            config = lower_config(config)
+            state_dict = torch.load('/detectors/ml-aspanformer/weights/weights/outdoor.ckpt', map_location='cpu')['state_dict']
+            
+            # Prepare matcher
+            matcher = ASpanFormer(config=config["aspan"])
+            matcher.load_state_dict(state_dict,strict=False)
+            matcher.cuda()
+            matcher.eval()
+
+        elif detector == "roma": 
+            from roma import roma_outdoor
+            detector = None
+            matcher = roma_outdoor(device=self.device, coarse_res=560, upsample_res=(864, 1152))
+
+        return detector, matcher
+
     def load_images(self) -> None:
         """
         Method to load images using pyvips.
