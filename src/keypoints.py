@@ -4,13 +4,14 @@ import cv2
 import kornia as K
 from typing import List, Any
 from lightglue.utils import rbd
+import torch.nn.functional as F
 
 # import demo_utils
 
 
 def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Wrapped function to get keypoints from any of the supported detectors.
+    Wrapper function to get keypoints from any of the supported detectors.
     """
 
     if detector_name in ["superpoint", "disk"]:
@@ -42,7 +43,7 @@ def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, det
         moving_features = detector.extract(moving_tensor)
         matches01 = matcher({'image0': ref_features, 'image1': moving_features})
 
-    # Convert
+    # Extract matches
     ref_features, moving_features, matches01 = [rbd(x) for x in [ref_features, moving_features, matches01]] 
     matches = matches01['matches']
 
@@ -58,7 +59,7 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
     Function to get matching keypoints with the LoFTR detector and matcher.
     """
 
-    loftr_size = 480
+    LOFTR_SIZE = 480
 
     # Convert to grayscale
     ref_image = cv2.cvtColor(ref_image, cv2.COLOR_RGB2GRAY)
@@ -69,8 +70,8 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
     moving_tensor = K.image_to_tensor(moving_image, None).float() / 255.0
 
     # Rescale to fit LoFTR architecture
-    ref_tensor = K.geometry.transform.resize(ref_tensor, (loftr_size, loftr_size), antialias=True).cuda()
-    moving_tensor = K.geometry.transform.resize(moving_tensor, (loftr_size, loftr_size), antialias=True).cuda()
+    ref_tensor = K.geometry.transform.resize(ref_tensor, (LOFTR_SIZE, LOFTR_SIZE), antialias=True).cuda()
+    moving_tensor = K.geometry.transform.resize(moving_tensor, (LOFTR_SIZE, LOFTR_SIZE), antialias=True).cuda()
 
     # Get matcher and match
     input = {"image0": ref_tensor, "image1": moving_tensor}
@@ -82,8 +83,8 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
     scores = matches["confidence"].cpu().numpy()
 
     # Rescale to original size
-    ref_points = ref_points * (ref_image.shape[0] / loftr_size)
-    moving_points = moving_points * (moving_image.shape[0] / loftr_size)
+    ref_points = ref_points * (ref_image.shape[0] / LOFTR_SIZE)
+    moving_points = moving_points * (moving_image.shape[0] / LOFTR_SIZE)
 
     return ref_points, moving_points, scores
 
@@ -146,3 +147,43 @@ def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, m
     scores = data['mconf'].cpu().numpy()
 
     return ref_points, moving_points, scores
+
+
+def get_roma_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Function to get matching keypoints with ROMA
+    """
+
+    # Resize to ROMA scale
+    ROMA_SIZE = 560
+    ref_image_save = cv2.resize(ref_image, (ROMA_SIZE, ROMA_SIZE))
+    moving_image_save = cv2.resize(moving_image, (ROMA_SIZE, ROMA_SIZE))
+
+    # Roma requires image paths instead of images
+    ref_path = "/tmp/ref.png"
+    moving_path = "/tmp/moving.png"
+    cv2.imwrite(ref_path, ref_image_save)
+    cv2.imwrite(moving_path, moving_image_save)
+
+    # Match images directly
+    warp, certainty = matcher.match(ref_path, moving_path)
+
+    # Convert images to tensors 
+    ref_tensor = (torch.tensor(ref_image)/ 255).to("cuda").permute(2, 0, 1)
+    moving_tensor = (torch.tensor(moving_image) / 255).to("cuda").permute(2, 0, 1)
+    
+    # Warp images directly according to features
+    H, W = matcher.get_output_resolution()
+    im1_transfer_rgb = F.grid_sample(
+        ref_tensor[None], warp[:, W:, :2][None], mode="bilinear", align_corners=False
+    )[0]
+    im2_transfer_rgb = F.grid_sample(
+        moving_tensor[None], warp[:,:W, 2:][None], mode="bilinear", align_corners=False
+    )[0]
+
+    # Created combined image with masked out uncertain areas
+    warp_im = torch.cat((im2_transfer_rgb, im1_transfer_rgb), dim=2)
+    white_im = torch.ones((H, 2*W), device="cuda")
+    vis_im = certainty * warp_im + (1 - certainty) * white_im
+
+    return 

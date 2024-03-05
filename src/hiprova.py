@@ -39,7 +39,7 @@ class Hiprova:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        assert self.detector_name in ["dalf", "superpoint", "disk", "loftr", "aspanformer"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk', 'loftr', 'aspanformer']."
+        assert self.detector_name in ["dalf", "superpoint", "disk", "loftr", "aspanformer", "roma"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk', 'loftr', 'aspanformer', 'roma']."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
         if not self.local_save_dir.is_dir():
@@ -110,7 +110,6 @@ class Hiprova:
             from src.ASpanFormer.aspanformer import ASpanFormer 
             from src.config.default import get_cfg_defaults
             from src.utils.misc import lower_config
-            detector = None
             # Prepare config file
             config = get_cfg_defaults()
             config.merge_from_file('/detectors/ml-aspanformer/configs/aspan/outdoor/aspan_test.py')
@@ -122,6 +121,7 @@ class Hiprova:
             matcher.load_state_dict(state_dict,strict=False)
             matcher.cuda()
             matcher.eval()
+            detector = None
 
         elif detector == "roma": 
             from roma import roma_outdoor
