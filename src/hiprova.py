@@ -401,13 +401,13 @@ class Hiprova:
             transforms.ToTensor(),
             transforms.Lambda(lambda x: x*255)
         ])
-        normalizer = torchstain.normalizers.MacenkoNormalizer(backend="torch")
-        normalizer.fit(T(ref_image))
+        self.stain_normalizer = torchstain.normalizers.MacenkoNormalizer(backend="torch")
+        self.stain_normalizer.fit(T(ref_image))
 
         for im, mask in zip(self.images, self.masks):
 
             # Get stain normalized image, remove background artefacts and save
-            norm_im, _, _ = normalizer.normalize(T(im), stains=True)
+            norm_im, _, _ = self.stain_normalizer.normalize(T(im), stains=True)
             norm_im = norm_im.numpy().astype("uint8")
             norm_im[mask == 0] = 255
             normalized_images.append(norm_im)
@@ -422,6 +422,83 @@ class Hiprova:
         self.images = copy.copy(normalized_images)
 
         return
+
+    def normalize_stains_fullres(self) -> None:
+        """
+        Method to perform patch-based stain normalization on full slides. 
+        """
+
+        # Patch preparation
+        T = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x*255)
+        ])
+        PATCH_SIZE = 256
+        normalized_images = []
+
+        for im, mask in zip(self.fullres_images, self.fullres_masks):
+
+            # Iterate over patches
+            n_cols = int(np.ceil(im.width / PATCH_SIZE))
+            n_rows = int(np.ceil(im.height / PATCH_SIZE))
+
+            for c in range(n_cols):
+                for r in range(n_rows):
+
+                    # Get image and mask patch
+                    patch = im.crop(c*PATCH_SIZE, r*PATCH_SIZE, PATCH_SIZE, PATCH_SIZE).numpy()
+                    mask_patch = mask.crop(c*PATCH_SIZE, r*PATCH_SIZE, PATCH_SIZE, PATCH_SIZE).numpy()
+
+                    # Get stain normalized image, remove background artefacts and save
+                    norm_im, _, _ = self.stain_normalizer.normalize(T(patch), stains=True)
+                    norm_im = norm_im.numpy().astype("uint8")
+                    norm_im[mask_patch == 0] = 255
+                    im = im.insert(norm_im, c*PATCH_SIZE, r*PATCH_SIZE)
+
+            normalized_images.append(im)
+
+        plot_stain_normalization(
+            images = [i.numpy() for i in self.fullres_images],
+            normalized_images = [i.numpy() for i in normalized_images],
+            save_dir = self.local_save_dir
+        )
+
+        self.fullres_images = copy.copy(normalized_images)
+
+        return
+
+
+    def normalize_stains_fullres_reinhard(self) -> None:
+        """
+        Method to perform full resolution stain normalization directly on each slide.
+        """
+        
+        # Fit reference image
+        ref_image_idx = int(len(self.fullres_images) // 2)
+        ref_image = self.fullres_images[ref_image_idx]
+
+        normalizer = Reinhard_normalizer()
+        normalizer.fit(ref_image)
+
+        normalized_images = []
+
+        # Transform all images
+        for im, mask in zip(self.fullres_images, self.fullres_masks):
+
+            # Normalize image
+            norm_im = normalizer.transform(im)
+            normalized_images.append(norm_im)
+
+        plot_stain_normalization(
+            images = [i.numpy() for i in self.fullres_images],
+            normalized_images = [i.numpy() for i in normalized_images],
+            save_dir = self.local_save_dir
+        )
+
+        self.fullres_images = copy.copy(normalized_images)
+
+        return
+
 
     def align_center(self, images: List[np.ndarray], masks: List[np.ndarray], fullres_images: List[pyvips.Image], fullres_masks: List[pyvips.Image]) -> None:
         """
