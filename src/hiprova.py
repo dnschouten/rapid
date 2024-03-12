@@ -42,7 +42,8 @@ class Hiprova:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        assert self.detector_name in ["dalf", "superpoint", "disk", "loftr", "aspanformer", "roma"], "Only the following detectors are implemented ['dalf', 'superpoint', 'disk', 'loftr', 'aspanformer', 'roma']."
+        self.supported_detectors = ["dalf", "superpoint", "disk", "loftr", "aspanformer", "roma", "dedode"]
+        assert self.detector_name in self.supported_detectors, f"Only the following detectors are implemented {self.supported_detectors}."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
         if not self.local_save_dir.is_dir():
@@ -130,6 +131,18 @@ class Hiprova:
             from roma import roma_outdoor
             detector = None
             matcher = roma_outdoor(device=self.device, coarse_res=560, upsample_res=(864, 1152))
+
+        elif detector == "dedode":
+            from DeDoDe import dedode_detector_L, dedode_descriptor_B, dedode_descriptor_G
+            from DeDoDe.matchers.dual_softmax_matcher import DualSoftMaxMatcher
+
+            # Get decoupled detector and descriptor
+            dedode_detector = dedode_detector_L(weights = torch.load("/detectors/DeDoDe/assets/dedode_detector_L.pth"))
+            dedode_descriptor = dedode_descriptor_B(weights = torch.load("/detectors/DeDoDe/assets/dedode_descriptor_B.pth"))
+
+            # 
+            detector = (dedode_detector, dedode_descriptor)
+            matcher = DualSoftMaxMatcher()
 
         return detector, matcher
 
@@ -425,56 +438,11 @@ class Hiprova:
         self.images = copy.copy(normalized_images)
 
         if self.full_resolution:
-            self.normalize_stains_fullres_reinhard()
+            self.normalize_stains_fullres()
 
         return
 
     def normalize_stains_fullres(self) -> None:
-        """
-        Method to perform patch-based stain normalization on full slides. 
-        """
-
-        # Patch preparation
-        T = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Lambda(lambda x: x*255)
-        ])
-        PATCH_SIZE = 256
-        normalized_images = []
-
-        for im, mask in zip(self.fullres_images, self.fullres_masks):
-
-            # Iterate over patches
-            n_cols = int(np.ceil(im.width / PATCH_SIZE))
-            n_rows = int(np.ceil(im.height / PATCH_SIZE))
-
-            for c in range(n_cols):
-                for r in range(n_rows):
-
-                    # Get image and mask patch
-                    patch = im.crop(c*PATCH_SIZE, r*PATCH_SIZE, PATCH_SIZE, PATCH_SIZE).numpy()
-                    mask_patch = mask.crop(c*PATCH_SIZE, r*PATCH_SIZE, PATCH_SIZE, PATCH_SIZE).numpy()
-
-                    # Get stain normalized image, remove background artefacts and save
-                    norm_im, _, _ = self.stain_normalizer.normalize(T(patch), stains=True)
-                    norm_im = norm_im.numpy().astype("uint8")
-                    norm_im[mask_patch == 0] = 255
-                    im = im.insert(norm_im, c*PATCH_SIZE, r*PATCH_SIZE)
-
-            normalized_images.append(im)
-
-        plot_stain_normalization(
-            images = [i.numpy() for i in self.fullres_images],
-            normalized_images = [i.numpy() for i in normalized_images],
-            save_dir = self.local_save_dir
-        )
-
-        self.fullres_images = copy.copy(normalized_images)
-
-        return
-
-
-    def normalize_stains_fullres_reinhard(self) -> None:
         """
         Method to perform full resolution stain normalization directly on each slide.
         """
@@ -508,7 +476,6 @@ class Hiprova:
         self.fullres_images = copy.copy(normalized_images)
 
         return
-
 
     def align_center(self, images: List[np.ndarray], masks: List[np.ndarray], fullres_images: List[pyvips.Image], fullres_masks: List[pyvips.Image]) -> None:
         """

@@ -94,17 +94,13 @@ def compute_tre_keypoints(images: List, detector: Any, matcher: Any, detector_na
     for c in range(len(images)-1):
 
         # Get keypoints
-        ref_points, moving_points, scores = get_keypoints(
+        ref_points, moving_points, _ = get_keypoints(
             detector = detector, 
             matcher = matcher,
             detector_name = detector_name,
             ref_image = images[c], 
             moving_image = images[c+1]
         )
-
-        # Keep the top half of most confident matches
-        ref_points = ref_points[scores > np.median(scores)]
-        moving_points = moving_points[scores > np.median(scores)]
 
         # Compute average TRE
         tre = np.median(np.linalg.norm(ref_points - moving_points, axis=-1))

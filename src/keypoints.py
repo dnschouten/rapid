@@ -2,11 +2,11 @@ import numpy as np
 import torch
 import cv2
 import kornia as K
+import warnings
 from typing import List, Any
 from lightglue.utils import rbd
 import torch.nn.functional as F
-
-# import demo_utils
+warnings.filterwarnings("ignore", category=UserWarning, module='torch.*')
 
 
 def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -17,13 +17,15 @@ def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np
     if detector_name in ["superpoint", "disk"]:
         ref_points, moving_points, scores = get_lightglue_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "dalf":
-        ref_points, moving_points = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
+        ref_points, moving_points, scores = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "loftr":
         ref_points, moving_points, scores = get_loftr_keypoints(ref_image, moving_image, matcher)
     elif detector_name == "aspanformer":
         ref_points, moving_points, scores = get_aspanformer_keypoints(ref_image, moving_image, matcher)
     elif detector_name == "roma":
         ref_points, moving_points, scores = get_roma_keypoints(ref_image, moving_image, matcher)
+    elif detector_name == "dedode":
+        ref_points, moving_points, scores = get_dedode_keypoints(ref_image, moving_image, detector, matcher)
 
     return ref_points, moving_points, scores
 
@@ -104,8 +106,9 @@ def get_dalf_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector
     # Get matching keypoints
     ref_points = np.float32([ref_points[m.queryIdx].pt for m in matches])
     moving_points = np.float32([moving_points[m.trainIdx].pt for m in matches])
+    scores = np.ones(ref_points.shape[0])
 
-    return ref_points, moving_points
+    return ref_points, moving_points, scores
 
 
 def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -187,3 +190,51 @@ def get_roma_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher:
     vis_im = certainty * warp_im + (1 - certainty) * white_im
 
     return 
+
+
+def get_dedode_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Function to get matching keypoints with DeDoDe
+    """
+
+    detector, descriptor = detector
+
+    W_A, H_A = ref_image.shape[:2]
+    W_B, H_B = moving_image.shape[:2]
+
+    # DeDoDe requires image paths instead of images
+    ref_path = "/tmp/ref.png"
+    moving_path = "/tmp/moving.png"
+    cv2.imwrite(ref_path, ref_image)
+    cv2.imwrite(moving_path, moving_image)
+
+    # Fetch keypoints
+    detections_A = detector.detect_from_path(ref_path, num_keypoints = 10_000)
+    keypoints_A, P_A = detections_A["keypoints"], detections_A["confidence"]
+
+    detections_B = detector.detect_from_path(moving_path, num_keypoints = 10_000)
+    keypoints_B, P_B = detections_B["keypoints"], detections_B["confidence"]
+
+    # Use decoupled descriptor to describe keypoints
+    description_A = descriptor.describe_keypoints_from_path(ref_path, keypoints_A)["descriptions"]
+    description_B = descriptor.describe_keypoints_from_path(moving_path, keypoints_B)["descriptions"]
+
+    # Match and convert to pixel coordinates
+    matches_A, matches_B, _ = matcher.match(
+        keypoints_A, 
+        description_A,
+        keypoints_B, 
+        description_B,
+        P_A = P_A,
+        P_B = P_B,
+        normalize = True, 
+        inv_temp=20, 
+        threshold = 0.05
+    )
+    matches_A, matches_B = matcher.to_pixel_coords(matches_A, matches_B, H_A, W_A, H_B, W_B)
+
+    ref_points = matches_A.cpu().numpy()
+    moving_points = matches_B.cpu().numpy()
+    scores = np.ones(ref_points.shape[0])
+
+    return ref_points, moving_points, scores
