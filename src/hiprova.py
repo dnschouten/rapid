@@ -9,12 +9,15 @@ import subprocess
 import shutil
 import torchstain
 import kornia as K
+import warnings
 import sys
 sys.path.append("/detectors")
+
 
 from pathlib import Path
 from typing import List
 from torchvision import transforms
+warnings.filterwarnings("ignore", category=UserWarning, module='torchvision.*')
 
 from visualization import *
 from utils import *
@@ -376,7 +379,7 @@ class Hiprova:
                     mask = mask_f,
                     rotation = random_rot,
                     translation = random_trans,
-                    center = (im_f.width//2, im_f.height//2),
+                    center = (im.shape[1]//2, im.shape[0]//2),
                     scaling = self.fullres_scaling
                 )
 
@@ -401,13 +404,13 @@ class Hiprova:
             transforms.ToTensor(),
             transforms.Lambda(lambda x: x*255)
         ])
-        self.stain_normalizer = torchstain.normalizers.MacenkoNormalizer(backend="torch")
+        self.stain_normalizer = torchstain.normalizers.ReinhardNormalizer(backend="torch")
         self.stain_normalizer.fit(T(ref_image))
 
         for im, mask in zip(self.images, self.masks):
 
             # Get stain normalized image, remove background artefacts and save
-            norm_im, _, _ = self.stain_normalizer.normalize(T(im), stains=True)
+            norm_im = self.stain_normalizer.normalize(T(im))
             norm_im = norm_im.numpy().astype("uint8")
             norm_im[mask == 0] = 255
             normalized_images.append(norm_im)
@@ -420,6 +423,9 @@ class Hiprova:
         )
 
         self.images = copy.copy(normalized_images)
+
+        if self.full_resolution:
+            self.normalize_stains_fullres_reinhard()
 
         return
 
@@ -487,6 +493,10 @@ class Hiprova:
 
             # Normalize image
             norm_im = normalizer.transform(im)
+
+            # Correct for potential background artefacts
+            inv_mask = 255 - mask
+            norm_im = (norm_im + inv_mask).cast("uchar")
             normalized_images.append(norm_im)
 
         plot_stain_normalization(
