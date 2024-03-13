@@ -42,7 +42,7 @@ class Hiprova:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        self.supported_detectors = ["dalf", "superpoint", "disk", "loftr", "aspanformer", "roma", "dedode"]
+        self.supported_detectors = ["dalf", "sift", "superpoint", "disk", "loftr", "aspanformer", "roma", "dedode", "dino"]
         assert self.detector_name in self.supported_detectors, f"Only the following detectors are implemented {self.supported_detectors}."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
@@ -73,7 +73,7 @@ class Hiprova:
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.detector, self.matcher = self.init_detector(detector = self.detector_name)
+        self.detector, self.matcher = self.init_detector(name = self.detector_name)
 
         # Set some RANSAC parameters
         self.ransac_thres_affine = self.config.ransac_thresholds[self.detector_name]
@@ -84,32 +84,36 @@ class Hiprova:
 
         return
     
-    def init_detector(self, detector: str) -> None:
+    def init_detector(self, name: str) -> None:
         """
         Method to initialize the matching algorithm. 
         """
 
         # Initialize the keypoint detector and matcher to prevent repeating this dozen of times
-        if detector == "superpoint":
+        if name == "superpoint":
             from lightglue import LightGlue, SuperPoint
             detector = SuperPoint(max_num_keypoints=None).eval().cuda()
             matcher = LightGlue(features=self.detector_name).eval().cuda() 
 
-        elif detector == "disk":
+        elif name == "sift":
+            detector = cv2.SIFT_create()
+            matcher = cv2.BFMatcher()
+
+        elif name == "disk":
             from lightglue import LightGlue, DISK
             detector = DISK(max_num_keypoints=None).eval().cuda()
             matcher = LightGlue(features=self.detector_name).eval().cuda() 
 
-        elif detector == "dalf":
+        elif name == "dalf":
             from modules.models.DALF import DALF_extractor as DALF
             detector = DALF(dev=self.device)
-            matcher = cv2.BFMatcher(crossCheck = True)
+            matcher = cv2.BFMatcher()
 
-        elif detector == "loftr":
+        elif name == "loftr":
             detector = None
             matcher = K.feature.LoFTR(pretrained="indoor_new").eval().cuda()
 
-        elif detector == "aspanformer":
+        elif name == "aspanformer":
             sys.path.append("/detectors/ml-aspanformer")
             from src.ASpanFormer.aspanformer import ASpanFormer 
             from src.config.default import get_cfg_defaults
@@ -127,12 +131,12 @@ class Hiprova:
             matcher.eval()
             detector = None
 
-        elif detector == "roma": 
+        elif name == "roma": 
             from roma import roma_outdoor
             detector = None
             matcher = roma_outdoor(device=self.device, coarse_res=560, upsample_res=(864, 1152))
 
-        elif detector == "dedode":
+        elif name == "dedode":
             from DeDoDe import dedode_detector_L, dedode_descriptor_B, dedode_descriptor_G
             from DeDoDe.matchers.dual_softmax_matcher import DualSoftMaxMatcher
 
@@ -143,6 +147,12 @@ class Hiprova:
             # 
             detector = (dedode_detector, dedode_descriptor)
             matcher = DualSoftMaxMatcher()
+
+        elif name == "dino":
+            from transformers import AutoModel
+
+            detector = AutoModel.from_pretrained("facebook/dinov2-base")
+            detector2 = AutoModel.from_pretrained("/detectors/dino/weights.pt")
 
         return detector, matcher
 

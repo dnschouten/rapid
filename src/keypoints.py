@@ -16,6 +16,8 @@ def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np
 
     if detector_name in ["superpoint", "disk"]:
         ref_points, moving_points, scores = get_lightglue_keypoints(ref_image, moving_image, detector, matcher)
+    elif detector_name == "sift":
+        ref_points, moving_points, scores = get_sift_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "dalf":
         ref_points, moving_points, scores = get_dalf_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "loftr":
@@ -50,10 +52,41 @@ def get_lightglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, det
     matches = matches01['matches']
 
     # Get matching keypoints
-    ref_points = np.float32([i.astype("int") for i in ref_features['keypoints'][matches[..., 0]].cpu().numpy()])
-    moving_points = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].cpu().numpy()])
+    ref_points = np.float32([i.astype("int") for i in ref_features['keypoints'][matches[..., 0]].detach().cpu().numpy()])
+    moving_points = np.float32([i.astype("int") for i in moving_features['keypoints'][matches[..., 1]].detach().cpu().numpy()])
 
     return ref_points, moving_points, matches01["scores"].detach().cpu().numpy()
+
+
+def get_sift_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Function to get matching keypoints with classical SIFT.
+    """
+
+    # Convert to grayscale
+    ref_image_gray = cv2.cvtColor(ref_image, cv2.COLOR_RGB2GRAY)
+    moving_image_gray = cv2.cvtColor(moving_image, cv2.COLOR_RGB2GRAY)
+
+    # Detect keypoints
+    ref_points, ref_features = detector.detectAndCompute(ref_image_gray, None)
+    moving_points, moving_features = detector.detectAndCompute(moving_image_gray, None)
+
+    # Match keypoints
+    matches = matcher.knnMatch(ref_features, moving_features, k=2)
+
+    # Apply Lowes ratio test
+    matches_filtered = []
+    for m, n in matches:
+        if m.distance < 0.75*n.distance:
+            matches_filtered.append(m)
+
+    ref_points = np.float32([ref_points[m.queryIdx].pt for m in matches_filtered])
+    moving_points = np.float32([moving_points[m.trainIdx].pt for m in matches_filtered])
+
+    max_distance = np.max([m.distance for m in matches_filtered])
+    scores = np.array([1 - m.distance/max_distance for m in matches_filtered])
+
+    return ref_points, moving_points, scores
 
 
 def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -80,9 +113,9 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
     with torch.no_grad():
         matches = matcher(input)
 
-    ref_points = matches["keypoints0"].cpu().numpy()
-    moving_points = matches["keypoints1"].cpu().numpy()
-    scores = matches["confidence"].cpu().numpy()
+    ref_points = matches["keypoints0"].detach().cpu().numpy()
+    moving_points = matches["keypoints1"].detach().cpu().numpy()
+    scores = matches["confidence"].detach().cpu().numpy()
 
     # Rescale to original size
     ref_points = ref_points * (ref_image.shape[0] / LOFTR_SIZE)
@@ -141,13 +174,13 @@ def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, m
     # Extract features and match
     with torch.no_grad():
         matcher(data, online_resize=True)
-        ref_points = data['mkpts0_f'].cpu().numpy()
-        moving_points = data['mkpts1_f'].cpu().numpy()
+        ref_points = data['mkpts0_f'].detach().cpu().numpy()
+        moving_points = data['mkpts1_f'].detach().cpu().numpy()
 
     # Convert keypoints back to original shape
     ref_points = ref_points * factor
     moving_points = moving_points * factor
-    scores = data['mconf'].cpu().numpy()
+    scores = data['mconf'].detach().cpu().numpy()
 
     return ref_points, moving_points, scores
 
@@ -229,12 +262,27 @@ def get_dedode_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detect
         P_B = P_B,
         normalize = True, 
         inv_temp=20, 
-        threshold = 0.05
+        threshold = 0.001
     )
     matches_A, matches_B = matcher.to_pixel_coords(matches_A, matches_B, H_A, W_A, H_B, W_B)
+    # keypoints_A2, keypoints_B2 = matcher.to_pixel_coords(keypoints_A, keypoints_B, H_A, W_A, H_B, W_B)
 
-    ref_points = matches_A.cpu().numpy()
-    moving_points = matches_B.cpu().numpy()
+    # plt.figure()
+    # plt.imshow(ref_image)
+    # plt.scatter(keypoints_A2.detach().cpu().numpy()[:, :, 0], keypoints_A2.detach().cpu().numpy()[:, :, 1], c="r", s=0.5)
+    # plt.scatter(matches_A.detach().cpu().numpy()[:, 0], matches_A.detach().cpu().numpy()[:, 1], c="g", s=0.5)
+    # plt.savefig("/data/pathology/projects/icarus/3d_reconstruction/results/hiprova/012/test.png")
+    # plt.close()
+
+    ref_points = matches_A.detach().cpu().numpy()
+    moving_points = matches_B.detach().cpu().numpy()
     scores = np.ones(ref_points.shape[0])
 
     return ref_points, moving_points, scores
+
+def get_dino_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Function to get matching keypoints with DINO
+    """
+
+    return
