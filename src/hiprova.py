@@ -42,7 +42,7 @@ class Hiprova:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        self.supported_detectors = ["dalf", "sift", "superpoint", "disk", "loftr", "aspanformer", "roma", "dedode", "dino"]
+        self.supported_detectors = ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode", "dino"]
         assert self.detector_name in self.supported_detectors, f"Only the following detectors are implemented {self.supported_detectors}."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
@@ -98,11 +98,6 @@ class Hiprova:
         elif name == "sift":
             detector = cv2.SIFT_create()
             matcher = cv2.BFMatcher()
-
-        elif name == "disk":
-            from lightglue import LightGlue, DISK
-            detector = DISK(max_num_keypoints=None).eval().cuda()
-            matcher = LightGlue(features=self.detector_name).eval().cuda() 
 
         elif name == "dalf":
             from modules.models.DALF import DALF_extractor as DALF

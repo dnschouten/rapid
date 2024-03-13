@@ -14,7 +14,7 @@ def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np
     Wrapper function to get keypoints from any of the supported detectors.
     """
 
-    if detector_name in ["superpoint", "disk"]:
+    if detector_name == "superpoint":
         ref_points, moving_points, scores = get_lightglue_keypoints(ref_image, moving_image, detector, matcher)
     elif detector_name == "sift":
         ref_points, moving_points, scores = get_sift_keypoints(ref_image, moving_image, detector, matcher)
@@ -265,14 +265,6 @@ def get_dedode_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detect
         threshold = 0.001
     )
     matches_A, matches_B = matcher.to_pixel_coords(matches_A, matches_B, H_A, W_A, H_B, W_B)
-    # keypoints_A2, keypoints_B2 = matcher.to_pixel_coords(keypoints_A, keypoints_B, H_A, W_A, H_B, W_B)
-
-    # plt.figure()
-    # plt.imshow(ref_image)
-    # plt.scatter(keypoints_A2.detach().cpu().numpy()[:, :, 0], keypoints_A2.detach().cpu().numpy()[:, :, 1], c="r", s=0.5)
-    # plt.scatter(matches_A.detach().cpu().numpy()[:, 0], matches_A.detach().cpu().numpy()[:, 1], c="g", s=0.5)
-    # plt.savefig("/data/pathology/projects/icarus/3d_reconstruction/results/hiprova/012/test.png")
-    # plt.close()
 
     ref_points = matches_A.detach().cpu().numpy()
     moving_points = matches_B.detach().cpu().numpy()
