@@ -1,6 +1,8 @@
 import numpy as np
 import pathlib
 import cv2
+import warnings
+
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -141,10 +143,15 @@ def plot_align_center(images: List[np.ndarray], center: np.ndarray, savepath: pa
     return
 
 
-def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, tform: str, ransac_thres: float, savepath: pathlib.Path) -> None:
+def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: List, moving_points: List, scores: List, tform: str, ransac_thres: float, savepath: pathlib.Path) -> None:
     """
     Function to plot the keypoint pairs on two images.
     """
+
+    # Select top 1000 best scoring matches for visualization purposes
+    if len(ref_points) > 1000:
+        indices = np.argsort(scores)[-1000:]
+        ref_points, moving_points = ref_points[indices, :], moving_points[indices, :]
 
     # Compute ransac matches to visualize the effect of RANSAC
     if tform == "affine":
@@ -342,10 +349,15 @@ def plot_interpolated_contour(slice_a: np.ndarray, contour_a: List[int], slice_b
     return
 
 
-def plot_tre_per_pair(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: np.ndarray, moving_points: np.ndarray, tre: float, savepath: pathlib.Path) -> None:
+def plot_tre_per_pair(ref_image: np.ndarray, moving_image: np.ndarray, ref_points: np.ndarray, moving_points: np.ndarray, scores: List, tre: float, savepath: pathlib.Path) -> None:
     """
     Function to visualize the TRE per pair of images.
     """
+
+    # Select top 1000 best scoring matches for visualization purposes
+    if len(ref_points) > 1000:
+        indices = np.argsort(scores)[-1000:]
+        ref_points, moving_points = ref_points[indices, :], moving_points[indices, :]
 
     plt.figure(figsize=(8, 4))
     plt.suptitle(f"TRE: {tre:.2f} microns (n={len(ref_points)})")   
