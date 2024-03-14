@@ -111,7 +111,7 @@ def get_loftr_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher
 
     # Get matcher and match
     input = {"image0": ref_tensor, "image1": moving_tensor}
-    with torch.no_grad():
+    with torch.inference_mode():
         matches = matcher(input)
 
     ref_points = matches["keypoints0"].detach().cpu().numpy()
@@ -130,12 +130,13 @@ def get_dalf_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector
     Function to get matching keypoints with DALF
     """
 
-    # Extract features
-    ref_points, desc_ref = detector.detectAndCompute(ref_image)
-    moving_points, desc_moving = detector.detectAndCompute(moving_image)
-    
-    # Match features
-    matches = matcher.match(desc_ref, desc_moving)
+    with torch.inference_mode():
+        # Extract features
+        ref_points, desc_ref = detector.detectAndCompute(ref_image)
+        moving_points, desc_moving = detector.detectAndCompute(moving_image)
+        
+        # Match features
+        matches = matcher.match(desc_ref, desc_moving)
 
     # Get matching keypoints
     ref_points = np.float32([ref_points[m.queryIdx].pt for m in matches])
@@ -173,7 +174,7 @@ def get_aspanformer_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, m
     }
 
     # Extract features and match
-    with torch.no_grad():
+    with torch.inference_mode():
         matcher(data, online_resize=True)
         ref_points = data['mkpts0_f'].detach().cpu().numpy()
         moving_points = data['mkpts1_f'].detach().cpu().numpy()
@@ -202,12 +203,13 @@ def get_roma_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher:
     cv2.imwrite(ref_path, ref_image_save)
     cv2.imwrite(moving_path, moving_image_save)
 
-    # Match images directly
-    warp, certainty = matcher.match(ref_path, moving_path)
+    with torch.inference_mode():
+        # Match images directly
+        warp, certainty = matcher.match(ref_path, moving_path)
 
-    # Convert to pixel coordinates
-    matches, certainty = matcher.sample(warp, certainty)
-    ref_points , moving_points = matcher.to_pixel_coordinates(matches, ROMA_SIZE, ROMA_SIZE, ROMA_SIZE, ROMA_SIZE)
+        # Convert to pixel coordinates
+        matches, certainty = matcher.sample(warp, certainty)
+        ref_points , moving_points = matcher.to_pixel_coordinates(matches, ROMA_SIZE, ROMA_SIZE, ROMA_SIZE, ROMA_SIZE)
 
     # Scale to original pixel size
     upscale = ref_image.shape[0] / ROMA_SIZE
@@ -238,30 +240,31 @@ def get_dedode_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detect
     cv2.imwrite(ref_path, ref_image)
     cv2.imwrite(moving_path, moving_image)
 
-    # Fetch keypoints
-    detections_A = detector.detect_from_path(ref_path, num_keypoints = 10_000)
-    keypoints_A, P_A = detections_A["keypoints"], detections_A["confidence"]
+    with torch.inference_mode():
+        # Fetch keypoints
+        detections_A = detector.detect_from_path(ref_path, num_keypoints = 10_000)
+        keypoints_A, P_A = detections_A["keypoints"], detections_A["confidence"]
 
-    detections_B = detector.detect_from_path(moving_path, num_keypoints = 10_000)
-    keypoints_B, P_B = detections_B["keypoints"], detections_B["confidence"]
+        detections_B = detector.detect_from_path(moving_path, num_keypoints = 10_000)
+        keypoints_B, P_B = detections_B["keypoints"], detections_B["confidence"]
 
-    # Use decoupled descriptor to describe keypoints
-    description_A = descriptor.describe_keypoints_from_path(ref_path, keypoints_A)["descriptions"]
-    description_B = descriptor.describe_keypoints_from_path(moving_path, keypoints_B)["descriptions"]
+        # Use decoupled descriptor to describe keypoints
+        description_A = descriptor.describe_keypoints_from_path(ref_path, keypoints_A)["descriptions"]
+        description_B = descriptor.describe_keypoints_from_path(moving_path, keypoints_B)["descriptions"]
 
-    # Match and convert to pixel coordinates
-    matches_A, matches_B, _ = matcher.match(
-        keypoints_A, 
-        description_A,
-        keypoints_B, 
-        description_B,
-        P_A = P_A,
-        P_B = P_B,
-        normalize = True, 
-        inv_temp=20, 
-        threshold = 0.001
-    )
-    matches_A, matches_B = matcher.to_pixel_coords(matches_A, matches_B, H_A, W_A, H_B, W_B)
+        # Match and convert to pixel coordinates
+        matches_A, matches_B, _ = matcher.match(
+            keypoints_A, 
+            description_A,
+            keypoints_B, 
+            description_B,
+            P_A = P_A,
+            P_B = P_B,
+            normalize = True, 
+            inv_temp=20, 
+            threshold = 0.001
+        )
+        matches_A, matches_B = matcher.to_pixel_coords(matches_A, matches_B, H_A, W_A, H_B, W_B)
 
     ref_points = matches_A.detach().cpu().numpy()
     moving_points = matches_B.detach().cpu().numpy()
