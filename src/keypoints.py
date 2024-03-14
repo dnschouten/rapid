@@ -4,9 +4,10 @@ import cv2
 import kornia as K
 import warnings
 from typing import List, Any
-from lightglue.utils import rbd
 import torch.nn.functional as F
 warnings.filterwarnings("ignore", category=UserWarning, module='torch.*')
+
+from lightglue.utils import rbd
 
 
 def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np.ndarray, moving_image: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -204,25 +205,21 @@ def get_roma_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, matcher:
     # Match images directly
     warp, certainty = matcher.match(ref_path, moving_path)
 
-    # Convert images to tensors 
-    ref_tensor = (torch.tensor(ref_image)/ 255).to("cuda").permute(2, 0, 1)
-    moving_tensor = (torch.tensor(moving_image) / 255).to("cuda").permute(2, 0, 1)
-    
-    # Warp images directly according to features
-    H, W = matcher.get_output_resolution()
-    im1_transfer_rgb = F.grid_sample(
-        ref_tensor[None], warp[:, W:, :2][None], mode="bilinear", align_corners=False
-    )[0]
-    im2_transfer_rgb = F.grid_sample(
-        moving_tensor[None], warp[:,:W, 2:][None], mode="bilinear", align_corners=False
-    )[0]
+    # Convert to pixel coordinates
+    matches, certainty = matcher.sample(warp, certainty)
+    ref_points , moving_points = matcher.to_pixel_coordinates(matches, ROMA_SIZE, ROMA_SIZE, ROMA_SIZE, ROMA_SIZE)
 
-    # Created combined image with masked out uncertain areas
-    warp_im = torch.cat((im2_transfer_rgb, im1_transfer_rgb), dim=2)
-    white_im = torch.ones((H, 2*W), device="cuda")
-    vis_im = certainty * warp_im + (1 - certainty) * white_im
+    # Scale to original pixel size
+    upscale = ref_image.shape[0] / ROMA_SIZE
+    ref_points = (ref_points * upscale).cpu().numpy()
+    moving_points = (moving_points * upscale).cpu().numpy()
 
-    return 
+    # Only keep matches with high certainty
+    ref_points = ref_points[certainty.cpu().numpy() > 0.9]
+    moving_points = moving_points[certainty.cpu().numpy() > 0.9]
+    scores = certainty.cpu().numpy()[certainty.cpu().numpy() > 0.9]
+
+    return ref_points, moving_points, scores
 
 
 def get_dedode_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -272,9 +269,3 @@ def get_dedode_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detect
 
     return ref_points, moving_points, scores
 
-def get_dino_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Function to get matching keypoints with DINO
-    """
-
-    return
