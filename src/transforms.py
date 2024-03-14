@@ -2,17 +2,47 @@ import cv2
 import numpy as np
 import pyvips
 import torch
-import sys 
+import sys
 
 from skimage import transform
 from skimage.transform import EuclideanTransform
 from skimage.measure import ransac
 from typing import List, Any
 
+import pymagsac
 sys.path.append("/detectors/DALF_CVPR_2023")
 from modules.tps import RANSAC
 from modules.tps import pytorch as tps_pth
 from modules.tps import numpy as tps_np
+
+
+def apply_affine_magsac(moving_points: np.ndarray, ref_points: np.ndarray) -> tuple([np.ndarray, np.ndarray, Any]):
+    """
+    Function to apply MAGSAC to filter plausible matches for affine transform.
+    """
+
+    # Convert to 3D points
+    ref_points_3d = np.hstack((ref_points, np.ones((len(ref_points), 1))))    
+    moving_points_3d = np.hstack((moving_points, np.ones((len(moving_points), 1))))
+    matches = np.ascontiguousarray(np.hstack((ref_points_3d, moving_points_3d)))
+
+    # Apply MAGSAC to further filter plausible matches
+    mat, mask = pymagsac.findRigidTransformation(
+        matches, 
+        probabilities = [],
+        min_iters = 100,
+        max_iters = 10000,
+        sampler = 1,
+        use_magsac_plus_plus = True,
+        sigma_th = 0.90
+    )
+    mat = EuclideanTransform(mat.T[:3, :3])
+
+    # Filter based on inliers
+    ref_points = ref_points[mask]
+    moving_points = moving_points[mask]
+
+    return ref_points, moving_points, mask, mat
 
 
 def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac_thres: float) -> tuple([np.ndarray, np.ndarray, Any]):
@@ -27,7 +57,7 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
     # Apply ransac to further filter plausible matches
     if len(moving_points) > min_matches:
 
-        _, inliers = ransac(
+        model, inliers = ransac(
             (moving_points, ref_points),
             EuclideanTransform, 
             min_samples=min_matches,
@@ -44,7 +74,7 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
         ref_points = np.float32([p for p, i in zip(ref_points, inliers) if i])
         moving_points = np.float32([p for p, i in zip(moving_points, inliers) if i])
 
-    return ref_points, moving_points, inliers
+    return ref_points, moving_points, inliers, model
 
 
 def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac: bool, ransac_thres: float) -> tuple([np.ndarray, List]):
@@ -55,7 +85,16 @@ def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray,
     if len(moving_points) > 0:
         # Filter matches based on RANSAC
         if ransac:
-            ref_points, moving_points, inliers = apply_affine_ransac(moving_points, ref_points, image, ransac_thres)
+            ref_points, moving_points, inliers, mat1 = apply_affine_magsac(
+                moving_points = moving_points, 
+                ref_points = ref_points
+            )
+            ref_points, moving_points, inliers, mat2 = apply_affine_ransac(
+                moving_points = moving_points, 
+                ref_points = ref_points, 
+                image = image, 
+                ransac_thres = ransac_thres
+            )
         else:
             inliers = np.array([True] * len(moving_points))
 
