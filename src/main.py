@@ -50,7 +50,7 @@ def collect_arguments():
     assert data_dir.is_dir(), "Data directory does not exist."
     save_dir.mkdir(parents=True, exist_ok=True)
     assert mode in ["prealignment", "affine", "deformable", "valis", "baseline"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
-    assert not save_dir.joinpath(experiment).is_dir(), "Experiment folder already exists, did you forget to change it?"
+    # assert not save_dir.joinpath(experiment).is_dir(), "Experiment folder already exists, did you forget to change it?"
 
     return data_dir, save_dir, mode, experiment
 
@@ -76,7 +76,7 @@ def main():
     )
     df = pd.DataFrame()
 
-    for pt in patients:
+    for pt in patients[1:]:
 
         print(f"\nProcessing patient {pt.name}")
 

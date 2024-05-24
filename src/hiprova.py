@@ -42,7 +42,7 @@ class Hiprova:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        self.supported_detectors = ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode", "dino"]
+        self.supported_detectors = ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode"]
         assert self.detector_name in self.supported_detectors, f"Only the following detectors are implemented {self.supported_detectors}."
 
         self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
@@ -147,7 +147,7 @@ class Hiprova:
             from transformers import AutoModel
 
             detector = AutoModel.from_pretrained("facebook/dinov2-base")
-            detector2 = AutoModel.from_pretrained("/detectors/dino/weights.pt")
+            # detector2 = AutoModel.from_pretrained("/detectors/dino/weights.pt")
 
         return detector, matcher
 
@@ -716,7 +716,7 @@ class Hiprova:
                 ref_image = final_images[ref]
 
                 # Extract keypoints
-                ref_points, moving_points, _ = get_keypoints(
+                ref_points, moving_points, scores = get_keypoints(
                     detector = self.detector, 
                     matcher = self.matcher,
                     detector_name = self.detector_name,
@@ -728,6 +728,7 @@ class Hiprova:
                     moving_image = moving_image,
                     ref_points = ref_points,
                     moving_points = moving_points,
+                    scores = scores,
                     tform = "affine",
                     ransac_thres = self.ransac_thres_affine,
                     savepath = self.local_save_dir.joinpath("keypoints", f"keypoints_affine_{mov}_to_{ref}_rot_{rot}.png")
@@ -1125,6 +1126,9 @@ class Hiprova:
         # Upload local results to external storage 
         subprocess.call(f"cp -r {self.local_save_dir} {self.save_dir.parent}", shell=True)
         shutil.rmtree(self.local_save_dir)
+
+        # Clean up some torch memory to prevent OOM
+        torch.cuda.empty_cache()
 
         return
     

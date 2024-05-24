@@ -101,8 +101,10 @@ class Registration:
 
         # Perform rigid + non-rigid registration
         registrar = registration.Valis(
-            str(self.local_data_dir),
-            str(self.local_save_dir),
+            # str(self.local_data_dir),
+            str(self.datadir),
+            # str(self.local_save_dir),
+            str(self.savedir),
             imgs_ordered=True
         )
         rigid_registrar, non_rigid_registrar, error_df = registrar.register()
@@ -124,7 +126,7 @@ class Registration:
 
         # Save results
         if self.perform_fullres:
-            self.save_slide_path = self.savedir.joinpath(self.case, "registered_slides")
+            self.save_slide_path = self.local_save_dir.joinpath("registered_slides")
             registrar.warp_and_save_slides(str(self.save_slide_path), compression="jpeg")
 
         return
@@ -161,7 +163,7 @@ class Registration:
                     pyramid=True
                 )
 
-        registration.kill_jvm()
+        # registration.kill_jvm()
 
         return
 
@@ -199,10 +201,10 @@ def main():
             micro=micro,
             fullres=fullres
         )
-        reg.copy_to_local()
+        # reg.copy_to_local()
         reg.register()
         reg.convert_ometiff()
-        reg.copy_to_remote()
+        # reg.copy_to_remote()
 
     return
 

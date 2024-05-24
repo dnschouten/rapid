@@ -155,11 +155,11 @@ def plot_keypoint_pairs(ref_image: np.ndarray, moving_image: np.ndarray, ref_poi
 
     # Compute ransac matches to visualize the effect of RANSAC
     if tform == "affine":
-        ref_points_ransac, moving_points_ransac, inliers = apply_affine_ransac(
+        ref_points_ransac, moving_points_ransac, inliers, _ = apply_affine_magsac(
             moving_points = moving_points,
             ref_points = ref_points,
-            image = moving_image,
-            ransac_thres = ransac_thres
+            # image = moving_image,
+            # ransac_thres = ransac_thres
         )
     elif tform == "deformable":
         ref_points_ransac, moving_points_ransac = apply_deformable_ransac(
@@ -256,8 +256,10 @@ def plot_warped_images(ref_image: np.ndarray, ref_mask: np.ndarray, moving_image
     plt.axis("off")
     plt.subplot(144)
     plt.imshow(np.zeros_like(moving_image_warped))
-    plt.scatter(cnt_ref[:, 0], cnt_ref[:, 1], c="r", s=2)
-    plt.scatter(cnt_moving[:, 0], cnt_moving[:, 1], c="b", s=2)
+    if len(cnt_ref.shape) == 2:
+        plt.scatter(cnt_ref[:, 0], cnt_ref[:, 1], c="r", s=2)
+    if len(cnt_moving.shape) == 2:
+        plt.scatter(cnt_moving[:, 0], cnt_moving[:, 1], c="b", s=2)
     plt.title(f"dice: {overlap:.2f}")
     plt.axis("off")
     plt.savefig(savepath, dpi=300, bbox_inches="tight")

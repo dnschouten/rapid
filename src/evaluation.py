@@ -94,7 +94,7 @@ def compute_tre_keypoints(images: List, detector: Any, matcher: Any, detector_na
     for c in range(len(images)-1):
 
         # Get keypoints
-        ref_points, moving_points, _ = get_keypoints(
+        ref_points, moving_points, scores = get_keypoints(
             detector = detector, 
             matcher = matcher,
             detector_name = detector_name,
@@ -120,6 +120,7 @@ def compute_tre_keypoints(images: List, detector: Any, matcher: Any, detector_na
             moving_image = images[c+1], 
             ref_points = ref_points, 
             moving_points = moving_points, 
+            scores = scores,
             tre = scaled_tre,
             savepath = savepath
         )
