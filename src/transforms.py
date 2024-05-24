@@ -25,24 +25,33 @@ def apply_affine_magsac(moving_points: np.ndarray, ref_points: np.ndarray) -> tu
     ref_points_3d = np.hstack((ref_points, np.ones((len(ref_points), 1))))    
     moving_points_3d = np.hstack((moving_points, np.ones((len(moving_points), 1))))
     matches = np.ascontiguousarray(np.hstack((ref_points_3d, moving_points_3d)))
+    probs = np.ones((len(matches), 1))
 
     # Apply MAGSAC to further filter plausible matches
-    mat, mask = pymagsac.findRigidTransformation(
+    mat, inliers = pymagsac.findRigidTransformation(
         matches, 
-        probabilities = [],
-        min_iters = 100,
-        max_iters = 10000,
-        sampler = 1,
+        probabilities = probs,
         use_magsac_plus_plus = True,
-        sigma_th = 0.90
+        sampler=0,
+        # sigma_th = 0.95
     )
-    mat = EuclideanTransform(mat.T[:3, :3])
+
+    if np.sum(inliers) > 0:
+        # Convert to proper 3x3 matrix
+        matrix = np.ones((3, 3))
+        matrix[:2, :2] = -mat.T[:2, :2]
+        matrix[:2, 2] = -mat.T[:2, 3]
+        mat = EuclideanTransform(matrix = matrix)
+    else:
+        mat = EuclideanTransform(rotation = 0, translation = 0)
+        inliers = [True] * len(ref_points)
+        # print(f"unable to fit magsac++, returning identity matrix")
 
     # Filter based on inliers
-    ref_points = ref_points[mask]
-    moving_points = moving_points[mask]
+    ref_points = ref_points[inliers]
+    moving_points = moving_points[inliers]
 
-    return ref_points, moving_points, mask, mat
+    return ref_points, moving_points, inliers, mat
 
 
 def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image: np.ndarray, ransac_thres: float) -> tuple([np.ndarray, np.ndarray, Any]):
@@ -53,6 +62,9 @@ def apply_affine_ransac(moving_points: np.ndarray, ref_points: np.ndarray, image
     min_matches = 10
     inliers = np.array([False] * len(moving_points))
     res_thres = int(image.shape[0] * ransac_thres)
+
+    # Default to identity matrix 
+    model = EuclideanTransform(rotation = 0, translation = 0)
 
     # Apply ransac to further filter plausible matches
     if len(moving_points) > min_matches:
@@ -85,24 +97,29 @@ def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray,
     if len(moving_points) > 0:
         # Filter matches based on RANSAC
         if ransac:
-            ref_points, moving_points, inliers, mat1 = apply_affine_magsac(
+            ref_points_m, moving_points_m, inliers, mat1 = apply_affine_magsac(
                 moving_points = moving_points, 
                 ref_points = ref_points
             )
-            ref_points, moving_points, inliers, mat2 = apply_affine_ransac(
+            ref_points_r, moving_points_r, inliers, mat2 = apply_affine_ransac(
                 moving_points = moving_points, 
                 ref_points = ref_points, 
                 image = image, 
                 ransac_thres = ransac_thres
             )
+
+            # Compare magsac and ransac
+            print(f"magsac: rot={mat1.rotation:2f}, trans=[{mat1.translation[0]:2f}, {mat1.translation[1]:2f}]")
+            print(f"ransac: rot={mat2.rotation:2f}, trans=[{mat2.translation[0]:2f}, {mat2.translation[1]:2f}]")
+
         else:
             inliers = np.array([True] * len(moving_points))
 
-        # Estimate limited affine transform with only rotation and translation
+            # Estimate limited affine transform with only rotation and translation
         matrix = transform.estimate_transform(
             "euclidean", 
-            moving_points, 
-            ref_points
+            moving_points_m, 
+            ref_points_m
         )
         
     # Return identity matrix if no keypoints are found
