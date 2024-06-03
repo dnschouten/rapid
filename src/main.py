@@ -4,7 +4,7 @@ import json
 import numpy as np
 from pathlib import Path
 
-from hiprova import Hiprova
+from rapid import Rapid
 
 
 def collect_arguments():
@@ -31,7 +31,7 @@ def collect_arguments():
         required=True,
         type=str,
         default="affine",
-        help="Mode to run hiprova, options are ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
+        help="Mode to run RAPID, options are ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
     )
 
     args = parser.parse_args()
@@ -72,7 +72,7 @@ def main():
 
         print(f"\nProcessing patient {pt.name}")
 
-        constructor = Hiprova(
+        constructor = Rapid(
             data_dir = data_dir.joinpath(pt.name), 
             save_dir = save_dir.joinpath(pt.name),
             mode = mode,

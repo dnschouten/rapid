@@ -27,7 +27,7 @@ from keypoints import *
 from evaluation import *
 
 
-class Hiprova:
+class Rapid:
 
     def __init__(self, data_dir: Path, save_dir: Path, mode: str) -> None:
         
@@ -45,7 +45,7 @@ class Hiprova:
         self.supported_detectors = ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode"]
         assert self.detector_name in self.supported_detectors, f"Only the following detectors are implemented {self.supported_detectors}."
 
-        self.local_save_dir = Path(f"/tmp/hiprova/{self.save_dir.name}")
+        self.local_save_dir = Path(f"/tmp/rapid/{self.save_dir.name}")
         if not self.local_save_dir.is_dir():
             self.local_save_dir.mkdir(parents=True, exist_ok=True)
 
