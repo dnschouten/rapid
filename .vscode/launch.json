@@ -6,14 +6,15 @@
     "configurations": [
         {
             "name": "Python: Current File",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--datadir", "/data/pathology/archives/prostate/icarus/3d_reconstruction/hiprova/train",
-                "--savedir", "/data/pathology/projects/icarus/3d_reconstruction/results/hiprova/main/dalf"
+                "--datadir", "/data/pelvis/projects/daan/data/hiprova",
+                "--savedir", "/data/pelvis/projects/daan/results/hiprova",
+                "--mode", "affine",
             ]
         }
     ]
