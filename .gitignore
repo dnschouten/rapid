@@ -3,7 +3,7 @@ src/deprecated.py
 evaluation/*.sh
 *.out
 .vscode/
-src/.vscode
+src/.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
