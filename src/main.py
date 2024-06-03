@@ -33,26 +33,18 @@ def collect_arguments():
         default="affine",
         help="Mode to run hiprova, options are ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
     )
-    parser.add_argument(
-        "--experiment",
-        required=True,
-        type=str,
-        help="Experiment name, will be used to save the results from the experiment."
-    )
 
     args = parser.parse_args()
 
     data_dir = args.datadir
     save_dir = args.savedir
     mode = args.mode.lower()
-    experiment = args.experiment
 
     assert data_dir.is_dir(), "Data directory does not exist."
     save_dir.mkdir(parents=True, exist_ok=True)
     assert mode in ["prealignment", "affine", "deformable", "valis", "baseline"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
-    # assert not save_dir.joinpath(experiment).is_dir(), "Experiment folder already exists, did you forget to change it?"
 
-    return data_dir, save_dir, mode, experiment
+    return data_dir, save_dir, mode
 
 
 def main(): 
@@ -63,7 +55,7 @@ def main():
     np.random.seed(42)
 
     # Get args
-    data_dir, save_dir, mode, experiment = collect_arguments()
+    data_dir, save_dir, mode = collect_arguments()
     
     # Get patients
     patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
@@ -76,13 +68,13 @@ def main():
     )
     df = pd.DataFrame()
 
-    for pt in patients[1:]:
+    for pt in patients:
 
         print(f"\nProcessing patient {pt.name}")
 
         constructor = Hiprova(
             data_dir = data_dir.joinpath(pt.name), 
-            save_dir = save_dir.joinpath(experiment, pt.name),
+            save_dir = save_dir.joinpath(pt.name),
             mode = mode,
         )
         constructor.run()
@@ -99,7 +91,7 @@ def main():
         df = pd.concat([df, new_df], ignore_index=True)
 
     # Save dataframe
-    df.to_excel(save_dir.joinpath(experiment, "aggregate_metrics.xlsx"), index=False)
+    df.to_excel(save_dir.joinpath("aggregate_metrics.xlsx"), index=False)
 
     # Save most important config details
     config = {
@@ -112,7 +104,7 @@ def main():
         "deformable_ransac": constructor.deformable_ransac,
         "ransac_thresholds": constructor.ransac_thres_affine,
     } 
-    with open(save_dir.joinpath(experiment, "config.json"), "w") as f:
+    with open(save_dir.joinpath("config.json"), "w") as f:
         json.dump(config, f)
 
     return
