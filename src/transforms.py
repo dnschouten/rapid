@@ -109,8 +109,8 @@ def estimate_affine_transform(moving_points: np.ndarray, ref_points: np.ndarray,
             )
 
             # Compare magsac and ransac
-            print(f"magsac: rot={mat1.rotation:2f}, trans=[{mat1.translation[0]:2f}, {mat1.translation[1]:2f}]")
-            print(f"ransac: rot={mat2.rotation:2f}, trans=[{mat2.translation[0]:2f}, {mat2.translation[1]:2f}]")
+            # print(f"magsac: rot={mat1.rotation:2f}, trans=[{mat1.translation[0]:2f}, {mat1.translation[1]:2f}]")
+            # print(f"ransac: rot={mat2.rotation:2f}, trans=[{mat2.translation[0]:2f}, {mat2.translation[1]:2f}]")
 
         else:
             inliers = np.array([True] * len(moving_points))

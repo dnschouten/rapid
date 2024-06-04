@@ -6,7 +6,7 @@ class Config:
         self.scramble = True
 
         # Name of the keypoint detection method. Must be in ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode"].
-        self.detector = "roma"
+        self.detector = "superpoint"
 
         # The level at which the images are processed for the different parts of the reconstruction. Lower
         # levels and thus higher resolution are more accurate but also cause memory problems.

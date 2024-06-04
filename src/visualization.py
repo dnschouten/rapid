@@ -3,7 +3,6 @@ import pathlib
 import cv2
 import warnings
 
-
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from typing import List, Any, Tuple
@@ -93,7 +92,7 @@ def plot_stain_normalization(images: List[np.ndarray], normalized_images: List[n
     savepath = save_dir.joinpath(f"{str(idx).zfill(2)}_stain_normalization.png")
 
     plt.figure(figsize=(len(images), 4))
-    plt.suptitle("Macenko stain normalization effect")
+    plt.suptitle("Reinhard stain normalization effect")
     for c, (image, normalized_image) in enumerate(zip(images, normalized_images), 1):
         plt.subplot(2, len(images), c)
         plt.imshow(image)
