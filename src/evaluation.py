@@ -3,39 +3,11 @@ import SimpleITK as sitk
 import pathlib
 import matplotlib.pyplot as plt
 import cv2
-from radiomics import shape
 from typing import List, Any
 from scipy.ndimage import zoom
 from scipy.spatial.distance import directed_hausdorff, cdist
 
-
 from keypoints import get_keypoints
-
-
-def compute_sphericity(mask: np.ndarray) -> float:
-    """
-    Function to compute the sphericity of a mask.
-    """
-
-    # Convert to 3D mask if required
-    if len(mask.shape) == 4:
-        mask = np.mean(mask, axis=-1)
-
-    # Downsample to roughly ~200 width/height
-    ds_factor = np.max(mask.shape) // 200
-    mask = zoom(mask, 1/ds_factor, order=0)
-
-    # Convert to simpleITK image
-    mask = (mask / np.max(mask)).astype("uint8")
-    sitk_mask = sitk.GetImageFromArray(mask)
-
-    # Compute sphericity
-    shape_features = shape.RadiomicsShape(sitk_mask, sitk_mask, label=1)
-    shape_features.enableFeatureByName('Sphericity', True)
-    shape_features.execute()
-    sphericity = float(shape_features.featureValues['Sphericity'])
-
-    return np.round(sphericity, 3)
 
 
 def compute_dice(mask1: np.ndarray, mask2: np.ndarray, normalized: bool = False) -> float:

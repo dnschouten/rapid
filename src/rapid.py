@@ -1082,9 +1082,6 @@ class Rapid:
             spacing = self.pixel_spacing_image
         )
 
-        # Compute sphericity of the reconstructed volume
-        self.sphericity = compute_sphericity(self.final_reconstruction_3d_mask)
-
         # Compute dice score of all adjacent masks
         self.reconstruction_dice = compute_reconstruction_dice(masks = self.final_masks, normalized = self.normalize_dice)
 

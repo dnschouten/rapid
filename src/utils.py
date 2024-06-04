@@ -11,7 +11,6 @@ from scipy.interpolate import interpn, interp1d
 from scipy.ndimage import zoom
 from scipy.spatial.distance import cdist
 from torchvision.transforms import ToTensor, ToPILImage
-from radiomics import shape
 
 from transforms import apply_affine_transform
 

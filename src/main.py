@@ -84,7 +84,6 @@ def main():
             "case": [pt.name],
             "dice": [constructor.reconstruction_dice],
             "tre": [constructor.tre],
-            "sphericity": [constructor.sphericity],
             "median_contour_dist": [constructor.contour_distance],
             "mode": [mode],
         })
