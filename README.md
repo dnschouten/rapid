@@ -34,7 +34,7 @@ Your input data should be prepared as follows, where you make a separate directo
             
 After preparing the input data in the aforementioned format, you can run the RAPID container with:
 
-    docker run -it --gpus all -v /home/user:/home/user dnschouten/rapid:v0.1
+    docker run -it --gpus all -v /home/user:/home/user --network host dnschouten/rapid:v0.1
 
 Inside the container you can clone the RAPID repo to get the latest version after which you can run the main.py script. The main.py script expects three main arguments: *datadir* which refers to the directory with your input data, *savedir* which refers to the location to save the results and *mode* which refers to the reconstruction mode ["affine", "deformable"] in which you want to run RAPID. You can use the *-v /home/user:/home/user* flag to attach any local storage with your data to the container.  
 
