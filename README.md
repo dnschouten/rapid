@@ -14,9 +14,9 @@ We have primarily tested RAPID on sparsely sampled prostatectomy specimens where
 
 ## How do I run RAPID?
 #### Docker container 
-It is highly recommended to run RAPID as a Docker container, since RAPID uses some libraries that need to be built from source. The Docker container comes prepackaged with these libraries and any additional model weights, and should run out-of-the-box. You can pull the container with the following command or alternatively build it yourself locally with the provided Dockerfile in /build.
+It is highly recommended to run RAPID as a Docker container, since RAPID uses some libraries that need to be built from source. The Docker container comes prepackaged with these libraries and any additional model weights, and should run out-of-the-box. We will soon provide a link to directly pull the pre-built container, but for now you can build the container yourself locally with the provided Dockerfile in /build.
 
-	>docker container coming soon<
+	docker build . --tag dnschouten/rapid:v0.1
 
 #### Data preparation
 Your input data should be prepared as follows, where you make a separate directory for each volume to be reconstructed. Ensure that the name of the tissue mask, if provided, is exactly the same as that of the image but with a "_mask" suffix. 
@@ -34,8 +34,9 @@ Your input data should be prepared as follows, where you make a separate directo
             
 After preparing the input data in the aforementioned format, you can run the RAPID container with:
 
-    docker run -v /home/user:/home/user >docker container coming soon< --datadir "/home/user/data" --savedir "/home/user/results" --mode affine
-where *datadir* refers to the directory with your input data, *savedir* refers to the location to save the result and *mode* refers to the reconstruction mode ["affine", "deformable"] in which you want to run RAPID. The  *-v /home/user:/home/user* flag is used to create a volume such that the container can access your local data directory. This can be any directory, as long as it is a parent directory for both the data and result directories. 
+    docker run --it --gpus all -v /home/user:/home/user dnschouten/rapid:v0.1
+
+Inside the container you can clone the RAPID repo to get the latest version after which you can run the main.py script. The main.py script expects three main arguments: *datadir* which refers to the directory with your input data, *savedir* which refers to the location to save the results and *mode* which refers to the reconstruction mode ["affine", "deformable"] in which you want to run RAPID. You can use the *-v /home/user:/home/user* flag to attach any local storage with your data to the container.  
 
 #### Sample data 
 If you don't have any data available, but are still curious to try RAPID, we will soon provide some sample data on Zenodo.
