@@ -5,8 +5,8 @@ class Config:
         # Apply translation and rotation to make it more difficult.
         self.scramble = True
 
-        # Name of the keypoint detection method. Must be in ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode"].
-        self.detector = "superpoint"
+        # Name of the keypoint detection method. Must be in ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode", "omniglue"].
+        self.detector = "omniglue"
 
         # The level at which the images are processed for the different parts of the reconstruction. Lower
         # levels and thus higher resolution are more accurate but also cause memory problems.
@@ -42,7 +42,8 @@ class Config:
             "loftr": 0.05,
             "aspanformer": 0.05,
             "roma": 0.05,
-            "dedode": 0.05
+            "dedode": 0.05,
+            "omniglue": 0.05,
         }
 
         # Some specimen sectioning variables. The slice thickness represents the thickness (micron) of one 

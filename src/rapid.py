@@ -19,6 +19,7 @@ from typing import List
 from skimage.color import rgb2hed, hed2rgb
 from torchvision import transforms
 warnings.filterwarnings("ignore", category=UserWarning, module='torchvision.*')
+warnings.filterwarnings("ignore", category=UserWarning, module='tensorflow.*')
 
 from visualization import *
 from utils import *
@@ -43,7 +44,7 @@ class Rapid:
         self.full_resolution_level_image = self.config.full_resolution_level
         self.full_resolution_level_mask = self.config.full_resolution_level - self.config.image_mask_level_diff
         self.detector_name = self.config.detector.lower()
-        self.supported_detectors = ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode"]
+        self.supported_detectors = ["dalf", "sift", "superpoint", "loftr", "aspanformer", "roma", "dedode", "omniglue"]
         assert self.detector_name in self.supported_detectors, f"Only the following detectors are implemented {self.supported_detectors}."
 
         self.local_save_dir = Path(f"/tmp/rapid/{self.save_dir.name}")
@@ -156,6 +157,16 @@ class Rapid:
 
             detector = AutoModel.from_pretrained("facebook/dinov2-base")
             # detector2 = AutoModel.from_pretrained("/detectors/dino/weights.pt")
+
+        elif name == "omniglue":
+            sys.path.append("/detectors/omniglue")
+            from omniglue.src.omniglue.omniglue_extract import OmniGlue
+            detector = None
+            matcher = OmniGlue(
+                og_export='/detectors/omniglue/models/og_export',
+                sp_export='/detectors/omniglue/models/sp_v6',
+                dino_export='/detectors/omniglue/models/dinov2_vitb14_pretrain.pth',
+            )
 
         return detector, matcher
 

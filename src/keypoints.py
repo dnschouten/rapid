@@ -29,6 +29,8 @@ def get_keypoints(detector: Any, matcher: Any, detector_name: str, ref_image: np
         ref_points, moving_points, scores = get_roma_keypoints(ref_image, moving_image, matcher)
     elif detector_name == "dedode":
         ref_points, moving_points, scores = get_dedode_keypoints(ref_image, moving_image, detector, matcher)
+    elif detector_name == "omniglue":
+        ref_points, moving_points, scores = get_omniglue_keypoints(ref_image, moving_image, detector, matcher)
 
     return ref_points, moving_points, scores
 
@@ -272,3 +274,12 @@ def get_dedode_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detect
 
     return ref_points, moving_points, scores
 
+def get_omniglue_keypoints(ref_image: np.ndarray, moving_image: np.ndarray, detector: Any, matcher: Any) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Function to get matching keypoints with omniglue.
+    """
+    
+    # Nice and easy
+    ref_points, moving_points, scores = matcher.FindMatches(ref_image, moving_image)
+
+    return ref_points, moving_points, scores
