@@ -16,6 +16,7 @@ sys.path.append("/detectors")
 
 from pathlib import Path
 from typing import List
+from skimage.color import rgb2hed, hed2rgb
 from torchvision import transforms
 warnings.filterwarnings("ignore", category=UserWarning, module='torchvision.*')
 
@@ -49,12 +50,17 @@ class Rapid:
         if not self.local_save_dir.is_dir():
             self.local_save_dir.mkdir(parents=True, exist_ok=True)
 
-        # For now only support tif
-        self.image_paths = sorted([i for i in self.data_dir.iterdir() if not "mask" in i.name])
+        self.image_paths = sorted([i for i in self.data_dir.iterdir() if not "mask" in i.name and not i.is_dir()])
         self.image_ids = [i.stem for i in self.image_paths]
-        self.mask_paths = sorted([i for i in self.data_dir.iterdir() if "mask" in i.name])
+        self.mask_paths = sorted([i for i in self.data_dir.iterdir() if "mask" in i.name and not i.is_dir()])
 
-        assert len(self.image_paths) == len(self.mask_paths), "Number of images and masks do not match."
+        if len(self.image_paths) == len(self.mask_paths):
+            self.masks_available = True
+        elif len(self.mask_paths) == 0:
+            self.masks_available = False    
+        else:
+            raise ValueError("Number of images and masks do not match.")
+            
         assert len(self.image_paths) > self.config.min_images_for_reconstruction, f"Need at least {self.config.min_images_for_reconstruction} images to perform a reasonable reconstruction."
 
         # Create directories
@@ -73,6 +79,8 @@ class Rapid:
 
         # Set device for GPU-based keypoint detection
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if self.device == "cpu" and self.detector_name in ["superpoint", "loftr", "aspanformer"]:
+            raise ValueError("Detector requires GPU but no GPU available.")
         self.detector, self.matcher = self.init_detector(name = self.detector_name)
 
         # Set some RANSAC parameters
@@ -233,23 +241,27 @@ class Rapid:
 
         self.raw_masks = []
 
-        for c, mask_path in enumerate(self.mask_paths):
+        if self.masks_available:
+            for c, mask_path in enumerate(self.mask_paths):
 
-            # Load mask and convert to numpy array
-            mask = pyvips.Image.new_from_file(str(mask_path), page=self.mask_level)
-            mask_np = mask.numpy()
+                # Load mask and convert to numpy array
+                mask = pyvips.Image.new_from_file(str(mask_path), page=self.mask_level)
+                mask_np = mask.numpy()
 
-            # Ensure size match between mask and image
-            im_shape = self.raw_images[c].shape[:2]
-            if im_shape[0] != mask_np.shape[0]:
-                mask_np = cv2.resize(mask_np, (im_shape[1], im_shape[0]), interpolation=cv2.INTER_NEAREST)
+                # Ensure size match between mask and image
+                im_shape = self.raw_images[c].shape[:2]
+                if im_shape[0] != mask_np.shape[0]:
+                    mask_np = cv2.resize(mask_np, (im_shape[1], im_shape[0]), interpolation=cv2.INTER_NEAREST)
 
-            # Save numpy mask
-            mask_np = ((mask_np > 0)*255).astype(np.uint8)
-            self.raw_masks.append(mask_np)
+                # Save numpy mask
+                mask_np = ((mask_np > 0)*255).astype(np.uint8)
+                self.raw_masks.append(mask_np)
 
-        if self.full_resolution:
-            self.load_masks_fullres()
+            if self.full_resolution:
+                self.load_masks_fullres()
+        else:
+            self.generate_masks()
+            self.generate_masks_fullres()
 
         return
 
@@ -280,6 +292,65 @@ class Rapid:
 
         # Check if pixel spacing is consistent
         assert np.std(all_spacings) < 0.01, "Pixel spacing is not consistent between masks."
+
+        return
+
+    def generate_masks(self) -> None:
+        """
+        Method to generate masks using a simple thresholding if masks have not been precomputed.
+        """
+        
+        for c, image in enumerate(self.raw_images):
+            
+            # Convert image to HED
+            image_hed = rgb2hed(image)
+            
+            # Apply thresholding on eosine channel
+            thres = np.percentile(np.unique(image_hed[:, :, 1]), 5)
+            mask = ((image_hed[:, :, 1] > thres)*1).astype("uint8")
+            
+            # Keep largest cc
+            _, labeled_im, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+            largest_cc_label = np.argmax(stats[1:, -1]) + 1
+            mask = ((labeled_im == largest_cc_label) * 255).astype("uint8")
+            
+            # Pad mask to perform morphological closing
+            pad = int(0.1 * mask.shape[0])
+            mask_pad = np.pad(mask, [[pad, pad], [pad, pad]], mode="constant", constant_values=0)
+
+            ksize = int(0.01 * np.max(mask.shape))
+            kernel = cv2.getStructuringElement(shape=cv2.MORPH_ELLIPSE, ksize=(ksize, ksize))
+            mask_closed = cv2.morphologyEx(src=mask_pad, op=cv2.MORPH_CLOSE, kernel=kernel, iterations=2)
+        
+            # Flood fill to get rid of 
+            mask_ff = np.zeros((mask_closed.shape[0] + 2, mask_closed.shape[1] + 2)).astype("uint8")
+            _, _, mask_final, _ = cv2.floodFill(mask_closed, mask_ff, (0, 0), 255)
+            mask_final = 1 - mask_final[1+pad:-1-pad, 1+pad:-1-pad]
+                       
+            self.raw_masks.append(mask_final)
+            
+        assert all([i.shape[:2]==j.shape for i, j in zip(self.raw_images, self.raw_masks)]), "Image and mask shapes do not match." 
+        assert all([np.sum(i)>0 for i in self.raw_masks]), "Error in generating mask."
+                 
+        return
+
+    def generate_masks_fullres(self) -> None:
+        """
+        Method to resize the generated masks to match the resolution of the fullres images.
+        """
+
+        self.raw_fullres_masks = [] 
+
+        for mask, image in zip(self.raw_masks, self.raw_fullres_images):
+            
+            # Resize mask to full resolution
+            scaling = image.width / mask.shape[1]
+            fullres_mask = pyvips.Image.new_from_array(mask, 1).resize(scaling)
+            
+            # Fix any potential scaling errors
+            fullres_mask = fullres_mask.gravity("centre", image.width, image.height).cast("uchar")
+            
+            self.raw_fullres_masks.append(fullres_mask)
 
         return
 
@@ -353,7 +424,7 @@ class Rapid:
             max_h * self.fullres_scaling, 
             extend="black"
         )
-        inverse_fullres_mask = 255 - fullres_mask
+        inverse_fullres_mask = (fullres_mask.max() - fullres_mask)*(255/fullres_mask.max())
 
         # Mask image by adding white to image and then casting to uint8
         masked_image_fullres = (fullres_image + inverse_fullres_mask).cast("uchar")
@@ -468,7 +539,7 @@ class Rapid:
             norm_im = normalizer.transform(im)
 
             # Correct for potential background artefacts
-            inv_mask = 255 - mask
+            inv_mask = (mask.max() - mask)*(255/mask.max())
             norm_im = (norm_im + inv_mask).cast("uchar")
             normalized_images.append(norm_im)
 
