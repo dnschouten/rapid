@@ -15,10 +15,13 @@ def collect_arguments():
     # Parse arguments
     parser = argparse.ArgumentParser(description='Parse arguments for 3D reconstruction.')
     parser.add_argument(
-        "--datadir",
+        "--datapath",
         required=True,
         type=Path,
-        help="Path to the data directory with images and masks."
+        help="Path to a csv/excel file containing the data to be reconstructed. This should be a 2-column file with the first " +
+              "column containing the case name (i.e. case_01) and the second column containg the full absolute path to the image " + 
+              "(i.e. /data/case_01/01.tif). If you only want to include every n-th image, you can just add the names of these images" + 
+              "in this column and the algorithm will skip the other images."
     )
     parser.add_argument(
         "--savedir",
@@ -36,15 +39,15 @@ def collect_arguments():
 
     args = parser.parse_args()
 
-    data_dir = args.datadir
+    data_path = args.datapath
     save_dir = args.savedir
     mode = args.mode.lower()
 
-    assert data_dir.is_dir(), "Data directory does not exist."
+    assert data_path.exists(), "Data file does not exist."
     save_dir.mkdir(parents=True, exist_ok=True)
     assert mode in ["prealignment", "affine", "deformable", "valis", "baseline"], "Mode not recognized, must be any of ['prealignment', 'affine', 'deformable', 'valis', 'baseline']."
 
-    return data_dir, save_dir, mode
+    return data_path, save_dir, mode
 
 
 def main(): 
@@ -55,33 +58,39 @@ def main():
     np.random.seed(42)
 
     # Get args
-    data_dir, save_dir, mode = collect_arguments()
+    data_path, save_dir, mode = collect_arguments()
     
-    # Get patients
-    patients = sorted([i for i in data_dir.iterdir() if i.is_dir()])
+    # Load excel 
+    data_path = Path(data_path)
+    data_overview = pd.read_csv(data_path) if data_path.suffix == ".csv" else pd.read_excel(data_path)
+    
+    # Get cases
+    cases = np.unique(list(data_overview["case"].values))
+    files_per_case = [data_overview[data_overview["case"] == case].filename.tolist() for case in cases]
 
     print(f"\nRunning job with following parameters:" \
-          f"\n - data directory: {data_dir}" \
+          f"\n - data path: {data_path}" \
           f"\n - save directory: {save_dir}" \
           f"\n - mode: {mode}" \
-          f"\n - num patients: {len(patients)}"
+          f"\n - num cases: {len(cases)}"
     )
     df = pd.DataFrame()
 
-    for pt in patients:
+    for case, files in zip(cases, files_per_case):
 
-        print(f"\nProcessing patient {pt.name}")
+        print(f"\nProcessing case {case}")
 
         constructor = Rapid(
-            data_dir = data_dir.joinpath(pt.name), 
-            save_dir = save_dir.joinpath(pt.name),
+            case = case,
+            files = files, 
+            save_dir = save_dir.joinpath(case),
             mode = mode,
         )
         constructor.run()
 
         # Save results in dataframe
         new_df = pd.DataFrame({
-            "case": [pt.name],
+            "case": [case],
             "dice": [constructor.reconstruction_dice],
             "tre": [constructor.tre],
             "median_contour_dist": [constructor.contour_distance],

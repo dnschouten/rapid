@@ -31,11 +31,12 @@ from evaluation import *
 
 class Rapid:
 
-    def __init__(self, data_dir: Path, save_dir: Path, mode: str) -> None:
+    def __init__(self, case: str, files: List, save_dir: Path, mode: str) -> None:
         
         self.config = Config()
 
-        self.data_dir = data_dir
+        self.case = case
+        self.image_paths = sorted([Path(i) for i in files])
         self.save_dir = save_dir
         self.mode = mode
 
@@ -51,9 +52,9 @@ class Rapid:
         if not self.local_save_dir.is_dir():
             self.local_save_dir.mkdir(parents=True, exist_ok=True)
 
-        self.image_paths = sorted([i for i in self.data_dir.iterdir() if not "mask" in i.name and not i.is_dir()])
         self.image_ids = [i.stem for i in self.image_paths]
-        self.mask_paths = sorted([i for i in self.data_dir.iterdir() if "mask" in i.name and not i.is_dir()])
+        self.mask_paths = [i.parent.joinpath(f"{i.stem}_mask{i.suffix}") for i in self.image_paths]
+        self.mask_paths = [i for i in self.mask_paths if i.exists()]
 
         if len(self.image_paths) == len(self.mask_paths):
             self.masks_available = True
@@ -317,7 +318,7 @@ class Rapid:
             image_hed = rgb2hed(image)
             
             # Apply thresholding on eosine channel
-            thres = np.percentile(np.unique(image_hed[:, :, 1]), 5)
+            thres = np.percentile(np.unique(image_hed[:, :, 1]), 1)
             mask = ((image_hed[:, :, 1] > thres)*1).astype("uint8")
             
             # Keep largest cc
